@@ -128,6 +128,7 @@ public class ProjectData implements Serializable {
         public int octave;
         public float velocity;
         public int durationMs;
+        public int variant;
         
         public NoteEventData() {}
         
@@ -138,10 +139,12 @@ public class ProjectData implements Serializable {
             this.octave = event.octave;
             this.velocity = event.velocity;
             this.durationMs = event.durationMs;
+            this.variant = event.variant;
         }
         
         public Track.NoteEvent toNoteEvent() {
-            return new Track.NoteEvent(timestampMs, instrumentType, noteIndex, octave, velocity, durationMs);
+            return new Track.NoteEvent(timestampMs, instrumentType, noteIndex, 
+                octave, velocity, durationMs, variant);
         }
     }
     

@@ -959,6 +959,33 @@ public class SketchCanvas extends JPanel {
         return interactionMode;
     }
     
+
+    private int getVariantFromElement(DrawableElement element) {
+        String type = element.getElementType();
+
+        if (type.equals("Drum") || type.equals("Snare Drum")) {
+            int size = element.getBounds().width; // 원형이면 width==height
+            if (size < 40) return 0;
+            if (size < 70) return 1;
+            return 2;
+        }
+
+        if (type.equals("Piano")) {
+            // ❌ octave 변수가 없으니 직접 쓰면 안 됨
+            // ✅ 기존 함수로 octave를 구해서 variant로 쓰기
+            return getOctaveFromElement(element);
+        }
+
+        if (type.equals("Guitar")) {
+            // 기타는 원하면 높이를 variant로 저장 가능
+            return element.getBounds().height;
+        }
+
+        return 0;
+    }
+
+
+
     /**
      * Record an element event if recording is active
      */
@@ -972,7 +999,11 @@ public class SketchCanvas extends JPanel {
                 int octave = getOctaveFromElement(element);
                 float velocity = element.getOpacity();
                 
-                trackManager.recordEvent(type, noteIndex, octave, velocity, durationMs);
+                int variant = getVariantFromElement(element);
+                
+                trackManager.recordEvent(
+                    type, noteIndex, octave, velocity, durationMs, variant
+                );
             }
         }
     }
@@ -989,7 +1020,7 @@ public class SketchCanvas extends JPanel {
         if (mapped != null && mapped.contains("Octave")) {
             try {
                 String[] parts = mapped.split(",")[0].split(" ");
-                return Integer.parseInt(parts[1]);
+                return Integer.parseInt(parts[1]) +1;
             } catch (Exception e) {
                 return 3; // Default octave
             }

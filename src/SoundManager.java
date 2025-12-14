@@ -883,32 +883,65 @@ public class SoundManager {
      * Play a metronome beep sound
      * Generates a short sine wave beep
      */
-    public void playMetronomeClick() {
+    // public void playMetronomeClick() {
+    //     new Thread(() -> {
+    //         try {
+    //             // Generate a short beep using AudioSystem
+    //             float sampleRate = 44100;
+    //             int durationMs = 50;
+    //             int numSamples = (int)(sampleRate * durationMs / 1000);
+    //             byte[] buffer = new byte[numSamples * 2];
+                
+    //             double frequency = 880.0; // A5 - typical metronome beep frequency
+                
+    //             for (int i = 0; i < numSamples; i++) {
+    //                 double angle = 2.0 * Math.PI * i * frequency / sampleRate;
+    //                 // Apply envelope for click sound
+    //                 double envelope = 1.0 - ((double)i / numSamples);
+    //                 short sample = (short)(Math.sin(angle) * 32767 * 0.5 * envelope);
+    //                 buffer[i * 2] = (byte)(sample & 0xFF);
+    //                 buffer[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+    //             }
+                
+    //             javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
+    //                 sampleRate, 16, 1, true, false);
+    //             javax.sound.sampled.DataLine.Info info = new javax.sound.sampled.DataLine.Info(
+    //                 javax.sound.sampled.SourceDataLine.class, format);
+    //             javax.sound.sampled.SourceDataLine line = 
+    //                 (javax.sound.sampled.SourceDataLine) javax.sound.sampled.AudioSystem.getLine(info);
+    //             line.open(format);
+    //             line.start();
+    //             line.write(buffer, 0, buffer.length);
+    //             line.drain();
+    //             line.close();
+    //         } catch (Exception e) {
+    //             System.err.println("Metronome beep error: " + e.getMessage());
+    //         }
+    //     }).start();
+    // }
+
+    public void playMetronomeClick(boolean isDownbeat) {
         new Thread(() -> {
             try {
-                // Generate a short beep using AudioSystem
                 float sampleRate = 44100;
                 int durationMs = 50;
                 int numSamples = (int)(sampleRate * durationMs / 1000);
                 byte[] buffer = new byte[numSamples * 2];
-                
-                double frequency = 880.0; // A5 - typical metronome beep frequency
-                
+
+                double frequency = isDownbeat ? 440.0 : 880.0; // A4 vs A5
+                double gain = 0.5; 
+
                 for (int i = 0; i < numSamples; i++) {
                     double angle = 2.0 * Math.PI * i * frequency / sampleRate;
-                    // Apply envelope for click sound
                     double envelope = 1.0 - ((double)i / numSamples);
-                    short sample = (short)(Math.sin(angle) * 32767 * 0.5 * envelope);
+                    short sample = (short)(Math.sin(angle) * 32767 * gain * envelope);
                     buffer[i * 2] = (byte)(sample & 0xFF);
                     buffer[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
                 }
-                
-                javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
-                    sampleRate, 16, 1, true, false);
-                javax.sound.sampled.DataLine.Info info = new javax.sound.sampled.DataLine.Info(
-                    javax.sound.sampled.SourceDataLine.class, format);
-                javax.sound.sampled.SourceDataLine line = 
-                    (javax.sound.sampled.SourceDataLine) javax.sound.sampled.AudioSystem.getLine(info);
+
+                AudioFormat format = new AudioFormat(sampleRate, 16, 1, true, false);
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+                SourceDataLine line = (SourceDataLine) AudioSystem.getLine(info);
                 line.open(format);
                 line.start();
                 line.write(buffer, 0, buffer.length);
@@ -919,6 +952,12 @@ public class SoundManager {
             }
         }).start();
     }
+
+    public void playMetronomeClick() {
+        playMetronomeClick(false);
+    }
+
+
     
     /**
      * Play a note event from a recorded track

@@ -42,6 +42,7 @@ public class RecordPanel extends JPanel {
     // Metronome
     private Timer metronomeTimer;
     private SketchCanvas canvas;
+    private int metronomeBeatIndex = 0;
     
     // Track management
     private TrackManager trackManager;
@@ -73,6 +74,21 @@ public class RecordPanel extends JPanel {
                 // Play the note through SoundManager
                 SoundManager.getInstance().playNoteEvent(event);
             }
+
+            @Override
+            public void onRecordingAutoStopped(String reason) {
+                // 메트로놈 끄기 + UI/모드 정리
+                stopMetronome();
+                isCountingIn = false; // 혹시 남아있으면 정리
+
+                if (canvas != null) {
+                    canvas.setInteractionMode(SketchCanvas.InteractionMode.OBJECT);
+                    canvas.repaint();
+                }
+
+                repaint();
+                System.out.println("Recording auto-stopped: " + reason);
+            }
         });
         
         // Load icons from symbols folder
@@ -89,11 +105,14 @@ public class RecordPanel extends JPanel {
                     // Minus button (left side, 25x25)
                     if (x >= 0 && x < BPM_BUTTON_SIZE) {
                         bpm = Math.max(MIN_BPM, bpm - 5);
+                        trackManager.setBpm(bpm);
+                        updateMetronomeBpm();
                         repaint();
                     }
-                    // Plus button (right side, 25x25)
                     else if (x >= TRACK_WIDTH - BPM_BUTTON_SIZE && x < TRACK_WIDTH) {
                         bpm = Math.min(MAX_BPM, bpm + 5);
+                        trackManager.setBpm(bpm);
+                        updateMetronomeBpm();
                         repaint();
                     }
                 }
@@ -317,7 +336,7 @@ public class RecordPanel extends JPanel {
         final int[] clickCount = {0};
         
         // Play first click immediately
-        SoundManager.getInstance().playMetronomeClick();
+        SoundManager.getInstance().playMetronomeClick(true);
         clickCount[0]++;
         System.out.println("Count-in: " + clickCount[0] + "/4");
         repaint();
@@ -326,7 +345,6 @@ public class RecordPanel extends JPanel {
             clickCount[0]++;
             if (clickCount[0] <= 4) {
                 SoundManager.getInstance().playMetronomeClick();
-                System.out.println("Count-in: " + clickCount[0] + "/4");
                 repaint();
             }
             
@@ -353,13 +371,20 @@ public class RecordPanel extends JPanel {
     }
     
     private void startMetronome() {
-        stopMetronome(); // Stop any existing metronome
-        
-        int intervalMs = 60000 / bpm; // Convert BPM to milliseconds
+        stopMetronome();
+
+        int intervalMs = 60000 / bpm;
+
+        metronomeBeatIndex = 0; // 메트로놈 시작 시 초기화
+
         metronomeTimer = new Timer(intervalMs, e -> {
-            SoundManager.getInstance().playMetronomeClick();
+            boolean downbeat = (metronomeBeatIndex == 0);
+            SoundManager.getInstance().playMetronomeClick(downbeat);
+            // int beatsPerLoop = getSelectedBeats(); // 4/8/16/32 중 선택값
+            metronomeBeatIndex = (metronomeBeatIndex + 1) % 4;
         });
-        metronomeTimer.setInitialDelay(intervalMs); // Wait one interval before first click
+
+        metronomeTimer.setInitialDelay(intervalMs);
         metronomeTimer.start();
     }
     
@@ -616,7 +641,8 @@ public class RecordPanel extends JPanel {
     
     public void setBpm(int bpm) {
         this.bpm = Math.max(MIN_BPM, Math.min(MAX_BPM, bpm));
-        trackManager.setBpm(bpm);
+        trackManager.setBpm(this.bpm);
+        updateMetronomeBpm();
         repaint();
     }
     

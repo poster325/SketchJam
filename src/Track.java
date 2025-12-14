@@ -17,14 +17,26 @@ public class Track {
         public final int octave;  // 1-5
         public final float velocity;  // 0.0-1.0 (opacity)
         public final int durationMs;  // Duration for guitar notes
-        
-        public NoteEvent(long timestampMs, String instrumentType, int noteIndex, int octave, float velocity, int durationMs) {
+
+        // 추가
+        public final int variant;   // 드럼/스네어/기타/피아노 공용
+
+        public NoteEvent(
+            long timestampMs,
+            String instrumentType,
+            int noteIndex,
+            int octave,
+            float velocity,
+            int durationMs,
+            int variant
+        ) {
             this.timestampMs = timestampMs;
             this.instrumentType = instrumentType;
             this.noteIndex = noteIndex;
             this.octave = octave;
             this.velocity = velocity;
             this.durationMs = durationMs;
+            this.variant = variant;
         }
     }
     
@@ -94,5 +106,39 @@ public class Track {
         // 16 beats = 16 * 60000 / bpm
         return (16 * 60000L) / bpm;
     }
+
+
+    public void retimeToNewLoop(long oldLoopMs, long newLoopMs) {
+        if (oldLoopMs <= 0 || newLoopMs <= 0 || events.isEmpty()) return;
+
+        List<NoteEvent> newEvents = new ArrayList<>(events.size());
+        for (NoteEvent e : events) {
+            long newTs = (e.timestampMs * newLoopMs) / oldLoopMs;
+            // duration도 같이 스케일할지 선택 가능 (기타 sustain 등)
+            int newDur = (int) Math.max(1, (e.durationMs * newLoopMs) / oldLoopMs);
+
+            newEvents.add(new NoteEvent(
+                newTs,
+                e.instrumentType,
+                e.noteIndex,
+                e.octave,
+                e.velocity,
+                newDur,
+                e.variant
+            ));
+        }
+
+        events.clear();
+        events.addAll(newEvents);
+
+        // durationMs 갱신
+        long max = 0;
+        for (NoteEvent e : events) {
+            long end = e.timestampMs + e.durationMs;
+            if (end > max) max = end;
+        }
+        durationMs = max;
+    }
+
 }
 

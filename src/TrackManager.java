@@ -45,6 +45,9 @@ public class TrackManager {
     public interface TrackUpdateListener {
         void onTracksUpdated();
         void onPlayNote(Track.NoteEvent event);
+
+        // 최대 트랙 도달 등으로 녹음이 자동 종료될 때
+        void onRecordingAutoStopped(String reason);
     }
     
     private int loopBeats = 16; // Default to 16 beats
@@ -63,8 +66,35 @@ public class TrackManager {
     }
     
     public void setBpm(int bpm) {
+        long oldLoop = this.loopDurationMs;
+        int oldBpm = this.currentBpm;
+
         this.currentBpm = bpm;
         updateLoopDuration();
+        long newLoop = this.loopDurationMs;
+
+        // 루프 모드일 때만 "한 마디" 기준으로 맞춰주면 됨
+        if (isLooping && oldLoop > 0 && newLoop > 0 && oldBpm != bpm) {
+            for (Track t : tracks) {
+                t.retimeToNewLoop(oldLoop, newLoop);
+            }
+            if (currentRecordingTrack != null) {
+                // 녹음 중인 트랙도 루프 기준으로 맞춰주려면 이것도 처리
+                currentRecordingTrack.retimeToNewLoop(oldLoop, newLoop);
+            }
+        }
+
+        // 타이머들이 옛 delay를 가지고 있을 수 있으니, 루프 타이머는 재설정
+        if (isLooping) {
+            if (recordingLoopTimer != null) setupLoopRecordingTimer();
+            if (playbackLoopTimer != null) setupLoopPlaybackTimer();
+        }
+
+        // 재생 중이면 기준점도 리셋해주는 게 안전
+        if (isPlaying) {
+            playbackStartTime = System.currentTimeMillis();
+            lastPlayedTime = -1;
+        }
     }
     
     public void setLoopBeats(int beats) {
@@ -91,6 +121,9 @@ public class TrackManager {
     public void startRecording() {
         if (tracks.size() >= MAX_TRACKS) {
             System.out.println("Maximum tracks reached");
+            if (listener != null) {
+                listener.onRecordingAutoStopped("MAX_TRACKS_REACHED");
+            }
             return;
         }
         
@@ -206,6 +239,10 @@ public class TrackManager {
                 } else {
                     // Max tracks reached, stop recording
                     stopRecording();
+
+                    if (listener != null) {
+                        listener.onRecordingAutoStopped("MAX_TRACKS_REACHED");
+                    }
                 }
             }
         });
@@ -235,7 +272,8 @@ public class TrackManager {
     /**
      * Record a note event
      */
-    public void recordEvent(String instrumentType, int noteIndex, int octave, float velocity, int durationMs) {
+    public void recordEvent(String instrumentType, int noteIndex, 
+        int octave, float velocity, int durationMs, int variant) {
         if (!isRecording || currentRecordingTrack == null) {
             System.out.println("Cannot record: isRecording=" + isRecording + ", hasTrack=" + (currentRecordingTrack != null));
             return;
@@ -249,7 +287,7 @@ public class TrackManager {
         }
         
         Track.NoteEvent event = new Track.NoteEvent(
-            timestamp, instrumentType, noteIndex, octave, velocity, durationMs
+            timestamp, instrumentType, noteIndex, octave, velocity, durationMs, variant
         );
         currentRecordingTrack.addEvent(event);
     }
