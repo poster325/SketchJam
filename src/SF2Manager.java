@@ -224,6 +224,53 @@ public class SF2Manager extends JPanel {
         return name;
     }
     
+    // Getters for file save
+    public String getSelectedPiano() {
+        if (pianoSelection == 0 || pianoSelection >= melodicSoundfonts.size()) return null;
+        return melodicSoundfonts.get(pianoSelection);
+    }
+    
+    public String getSelectedGuitar() {
+        if (guitarSelection == 0 || guitarSelection >= melodicSoundfonts.size()) return null;
+        return melodicSoundfonts.get(guitarSelection);
+    }
+    
+    public String getSelectedDrums() {
+        if (drumsSelection == 0 || drumsSelection >= drumSoundfonts.size()) return null;
+        return drumSoundfonts.get(drumsSelection);
+    }
+    
+    // Setters for file load
+    public void setPiano(String filename) {
+        refreshSoundfonts();
+        int index = melodicSoundfonts.indexOf(filename);
+        if (index > 0) {
+            pianoSelection = index;
+            SoundManager.getInstance().setPianoSoundfont(filename);
+        }
+        repaint();
+    }
+    
+    public void setGuitar(String filename) {
+        refreshSoundfonts();
+        int index = melodicSoundfonts.indexOf(filename);
+        if (index > 0) {
+            guitarSelection = index;
+            SoundManager.getInstance().setGuitarSoundfont(filename);
+        }
+        repaint();
+    }
+    
+    public void setDrums(String filename) {
+        refreshSoundfonts();
+        int index = drumSoundfonts.indexOf(filename);
+        if (index > 0) {
+            drumsSelection = index;
+            SoundManager.getInstance().setDrumsSoundfont(filename);
+        }
+        repaint();
+    }
+    
     @Override
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);

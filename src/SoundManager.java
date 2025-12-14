@@ -1,45 +1,56 @@
 import javax.sound.midi.*;
+import javax.sound.sampled.*;
 import java.awt.Color;
 import java.io.*;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Manages sound playback for SketchJam instruments using SF2 SoundFonts.
  * Loads multiple soundfonts for different instruments.
+ * Includes real-time EQ DSP using audio streaming.
  */
 public class SoundManager {
     
     private static SoundManager instance;
     
-    // MIDI synthesizer for SF2 playback
+    // MIDI synthesizer for SF2 playback (clean sounds)
     private Synthesizer synthesizer;
     private MidiChannel[] channels;
     private boolean soundfontsLoaded = false;
     
-    // Channel assignments
+    // Separate synthesizer for distortion sounds
+    private Synthesizer distortionSynth;
+    private MidiChannel[] distortionChannels;
+    
+    // Audio streaming for EQ DSP
+    private AudioInputStream audioStream;
+    private SourceDataLine audioLine;
+    private Thread audioThread;
+    private volatile boolean audioRunning = false;
+    
+    // EQ parameters (set from EQ panel)
+    private volatile float bassGain = 1.0f;   // 0.5 to 1.5
+    private volatile float trebleGain = 1.0f; // 0.5 to 1.5
+    // Bass filter state
+    private float bassYL = 0, bassYR = 0;
+    
+    // MIDI channel assignments
     private static final int PIANO_CHANNEL = 0;
     private static final int GUITAR_CHANNEL = 1;
     private static final int DRUM_CHANNEL = 9;  // Standard MIDI drum channel
     
+    // Distortion soundfont programs (bank + program)
+    private int distortionPianoBank = -1;
+    private int distortionPianoProgram = -1;
+    private int distortionGuitarBank = -1;
+    private int distortionGuitarProgram = -1;
+    private boolean distortionLoaded = false;
+    
     // Note names matching ColorPalette order
     public static final String[] NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     
-    // Colors matching the palette (for note detection from element color)
-    private static final Color[] NOTE_COLORS = {
-        Color.decode("#FF0000"), // C  - Red
-        Color.decode("#FF8000"), // C# - Orange
-        Color.decode("#FFFF00"), // D  - Yellow
-        Color.decode("#80FF00"), // D# - Yellow-Green
-        Color.decode("#00FF00"), // E  - Green
-        Color.decode("#00FF80"), // F  - Green-Cyan
-        Color.decode("#00FFFF"), // F# - Cyan
-        Color.decode("#0080FF"), // G  - Cyan-Blue
-        Color.decode("#0000FF"), // G# - Blue
-        Color.decode("#8000FF"), // A  - Purple
-        Color.decode("#FF00FF"), // A# - Magenta
-        Color.decode("#FF0080"), // B  - Pink-Red
-    };
     
     // Drum MIDI note numbers
     private static final int HIGH_TOM = 50;
@@ -63,7 +74,13 @@ public class SoundManager {
     private void initializeSynthesizer() {
         try {
             synthesizer = MidiSystem.getSynthesizer();
-            synthesizer.open();
+            
+            // Try to set up audio streaming with EQ
+            if (!trySetupAudioStreaming()) {
+                // Fallback to regular output
+                synthesizer.open();
+                System.out.println("MIDI Synthesizer initialized (no EQ DSP)");
+            }
             
             // Load all available soundfonts
             loadAllSoundFonts();
@@ -73,12 +90,147 @@ public class SoundManager {
             // Set up instrument programs based on loaded soundfonts
             setupInstruments();
             
-            System.out.println("MIDI Synthesizer initialized");
-            
         } catch (MidiUnavailableException e) {
             System.err.println("MIDI Synthesizer not available: " + e.getMessage());
         }
     }
+    
+    /**
+     * Try to set up audio streaming using reflection to access SoftSynthesizer.openStream()
+     */
+    private boolean trySetupAudioStreaming() {
+        try {
+            // Use reflection to call openStream on SoftSynthesizer
+            Method openStreamMethod = synthesizer.getClass().getMethod("openStream", 
+                AudioFormat.class, java.util.Map.class);
+            
+            AudioFormat format = new AudioFormat(44100, 16, 2, true, false);
+            audioStream = (AudioInputStream) openStreamMethod.invoke(synthesizer, format, null);
+            
+            // Open audio output
+            DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+            audioLine = (SourceDataLine) AudioSystem.getLine(info);
+            audioLine.open(format, 8192);
+            audioLine.start();
+            
+            // Start audio processing thread
+            audioRunning = true;
+            audioThread = new Thread(this::audioProcessingLoop, "EQAudio");
+            audioThread.setDaemon(true);
+            audioThread.start();
+            
+            System.out.println("Audio streaming with EQ DSP enabled");
+            return true;
+            
+        } catch (Exception e) {
+            System.out.println("Could not enable EQ DSP: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Audio processing loop - applies EQ
+     */
+    private void audioProcessingLoop() {
+        byte[] buffer = new byte[2048];
+        
+        while (audioRunning) {
+            try {
+                int bytesRead = audioStream.read(buffer, 0, buffer.length);
+                if (bytesRead > 0) {
+                    // Apply EQ DSP
+                    applyEQ(buffer, bytesRead);
+                    audioLine.write(buffer, 0, bytesRead);
+                }
+            } catch (Exception e) {
+                if (audioRunning) {
+                    System.err.println("Audio error: " + e.getMessage());
+                }
+            }
+        }
+    }
+    
+    // Mid-frequency filter state
+    private float midLpL1 = 0, midLpR1 = 0;  // First lowpass (cuts highs)
+    private float midHpL1 = 0, midHpR1 = 0;  // Then highpass (cuts lows) = bandpass for mids
+    
+    /**
+     * Apply EQ to audio buffer
+     */
+    private void applyEQ(byte[] buffer, int length) {
+        // Filter coefficients for extracting frequency bands
+        float bassAlpha = 0.97f;   // ~200Hz lowpass for bass
+        float midLpAlpha = 0.85f;  // ~2kHz lowpass
+        float midHpAlpha = 0.95f;  // ~400Hz highpass (combined = mid bandpass)
+        
+        for (int i = 0; i < length; i += 4) {
+            // Read stereo samples (16-bit little-endian)
+            int loL = buffer[i] & 0xFF;
+            int hiL = buffer[i + 1];
+            short sL = (short) ((hiL << 8) | loL);
+            
+            int loR = buffer[i + 2] & 0xFF;
+            int hiR = buffer[i + 3];
+            short sR = (short) ((hiR << 8) | loR);
+            
+            // Convert to float
+            float xL = sL / 32768.0f;
+            float xR = sR / 32768.0f;
+            
+            // === EQ PROCESSING ===
+            // Extract bass (lowpass ~200Hz)
+            bassYL = bassAlpha * bassYL + (1 - bassAlpha) * xL;
+            bassYR = bassAlpha * bassYR + (1 - bassAlpha) * xR;
+            
+            // Extract mids (bandpass ~400Hz-2kHz)
+            // First lowpass to cut highs
+            midLpL1 = midLpAlpha * midLpL1 + (1 - midLpAlpha) * xL;
+            midLpR1 = midLpAlpha * midLpR1 + (1 - midLpAlpha) * xR;
+            // Then highpass to cut lows (highpass = input - lowpass)
+            float midHpInL = midLpL1;
+            float midHpInR = midLpR1;
+            midHpL1 = midHpAlpha * midHpL1 + (1 - midHpAlpha) * midHpInL;
+            midHpR1 = midHpAlpha * midHpR1 + (1 - midHpAlpha) * midHpInR;
+            float midL = midHpInL - midHpL1;  // Mid frequencies
+            float midR = midHpInR - midHpR1;
+            
+            // Apply EQ:
+            // bassGain: 0.5-1.5 (dark=1.5 bass boost, light=0.5 bass cut)
+            // trebleGain: 0.5-1.5 (light=1.5 mid boost, dark=0.5 mid cut)
+            float bassBoostL = bassYL * (bassGain - 1.0f) * 2.5f;
+            float bassBoostR = bassYR * (bassGain - 1.0f) * 2.5f;
+            float midBoostL = midL * (trebleGain - 1.0f) * 4.0f;
+            float midBoostR = midR * (trebleGain - 1.0f) * 4.0f;
+            
+            xL = xL + bassBoostL + midBoostL;
+            xR = xR + bassBoostR + midBoostR;
+            
+            // Clamp and convert back
+            xL = Math.max(-0.999f, Math.min(0.999f, xL));
+            xR = Math.max(-0.999f, Math.min(0.999f, xR));
+            
+            short outL = (short) Math.round(xL * 32767.0f);
+            short outR = (short) Math.round(xR * 32767.0f);
+            
+            buffer[i] = (byte) (outL & 0xFF);
+            buffer[i + 1] = (byte) ((outL >> 8) & 0xFF);
+            buffer[i + 2] = (byte) (outR & 0xFF);
+            buffer[i + 3] = (byte) ((outR >> 8) & 0xFF);
+        }
+    }
+    
+    /**
+     * Set EQ parameters (bass and treble gain)
+     * @param bass Bass gain (0.5 = -6dB, 1.0 = 0dB, 1.5 = +6dB)
+     * @param treble Treble gain (0.5 = -6dB, 1.0 = 0dB, 1.5 = +6dB)
+     */
+    public void setEQ(float bass, float treble) {
+        this.bassGain = Math.max(0.5f, Math.min(1.5f, bass));
+        this.trebleGain = Math.max(0.5f, Math.min(1.5f, treble));
+    }
+    
+    public float getBassGain() { return bassGain; }
+    public float getTrebleGain() { return trebleGain; }
     
     private void loadAllSoundFonts() {
         File soundfontsDir = new File("soundfonts");
@@ -128,6 +280,90 @@ public class SoundManager {
         }
     }
     
+    /**
+     * Load distortion soundfonts from distortion/ folder into separate synthesizer
+     * First file with "guitar" = guitar distortion
+     * Other files = piano/pad distortion
+     */
+    private void loadDistortionSoundfonts() {
+        File distortionDir = new File("distortion");
+        if (!distortionDir.exists() || !distortionDir.isDirectory()) {
+            System.out.println("No distortion folder found - distortion mixing disabled");
+            return;
+        }
+        
+        File[] sf2Files = distortionDir.listFiles((dir, name) -> 
+            name.toLowerCase().endsWith(".sf2") || name.toLowerCase().endsWith(".sf3"));
+        
+        if (sf2Files == null || sf2Files.length == 0) {
+            System.out.println("No distortion SF2 files found");
+            return;
+        }
+        
+        // Create separate synthesizer for distortion
+        try {
+            distortionSynth = MidiSystem.getSynthesizer();
+            distortionSynth.open();
+            distortionChannels = distortionSynth.getChannels();
+        } catch (Exception e) {
+            System.err.println("Failed to create distortion synthesizer: " + e.getMessage());
+            return;
+        }
+        
+        for (File sf2File : sf2Files) {
+            try {
+                Soundbank soundbank = MidiSystem.getSoundbank(sf2File);
+                if (distortionSynth.isSoundbankSupported(soundbank)) {
+                    distortionSynth.loadAllInstruments(soundbank);
+                    String fileName = sf2File.getName().toLowerCase();
+                    
+                    // Find first instrument in this soundfont
+                    Instrument[] instruments = soundbank.getInstruments();
+                    if (instruments.length > 0) {
+                        Patch patch = instruments[0].getPatch();
+                        int bank = patch.getBank();
+                        int program = patch.getProgram();
+                        
+                        System.out.println("Loaded distortion: " + sf2File.getName() + 
+                            " -> " + instruments[0].getName() + " (bank " + bank + ", program " + program + ")");
+                        
+                        // Assign based on filename - "guitar" goes to guitar, everything else to piano
+                        if (fileName.contains("guitar") && distortionGuitarProgram < 0) {
+                            distortionGuitarBank = bank;
+                            distortionGuitarProgram = program;
+                            System.out.println("  -> Assigned to GUITAR distortion");
+                        } else if (distortionPianoProgram < 0) {
+                            distortionPianoBank = bank;
+                            distortionPianoProgram = program;
+                            System.out.println("  -> Assigned to PIANO distortion");
+                        }
+                    }
+                    distortionLoaded = true;
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to load distortion " + sf2File.getName() + ": " + e.getMessage());
+            }
+        }
+        
+        // Set up distortion channels on the SEPARATE synthesizer
+        if (distortionChannels != null && distortionLoaded) {
+            if (distortionPianoProgram >= 0) {
+                distortionChannels[PIANO_CHANNEL].controlChange(0, distortionPianoBank >> 7);
+                distortionChannels[PIANO_CHANNEL].controlChange(32, distortionPianoBank & 0x7F);
+                distortionChannels[PIANO_CHANNEL].programChange(distortionPianoProgram);
+                System.out.println("Distortion piano (separate synth) channel " + PIANO_CHANNEL + 
+                    " set to bank " + distortionPianoBank + ", program " + distortionPianoProgram);
+            }
+            if (distortionGuitarProgram >= 0) {
+                distortionChannels[GUITAR_CHANNEL].controlChange(0, distortionGuitarBank >> 7);
+                distortionChannels[GUITAR_CHANNEL].controlChange(32, distortionGuitarBank & 0x7F);
+                distortionChannels[GUITAR_CHANNEL].programChange(distortionGuitarProgram);
+                System.out.println("Distortion guitar (separate synth) channel " + GUITAR_CHANNEL + 
+                    " set to bank " + distortionGuitarBank + ", program " + distortionGuitarProgram);
+            }
+        }
+    }
+    
     private void setupInstruments() {
         if (channels == null || channels.length == 0) return;
         
@@ -164,12 +400,47 @@ public class SoundManager {
             }
         }
         
-        // Set up channels with found programs
+        // Set up clean channels with found programs
         channels[PIANO_CHANNEL].programChange(pianoProgram);
         channels[GUITAR_CHANNEL].programChange(guitarProgram);
         
         System.out.println("Piano channel " + PIANO_CHANNEL + " set to program " + pianoProgram);
         System.out.println("Guitar channel " + GUITAR_CHANNEL + " set to program " + guitarProgram);
+        
+        // Load distortion soundfonts
+        loadDistortionSoundfonts();
+    }
+    
+    /**
+     * Get saturation (0.0 to 1.0) from a color
+     */
+    public static float getSaturationFromColor(Color color) {
+        float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
+        return hsb[1]; // hsb[0]=hue, hsb[1]=saturation, hsb[2]=brightness
+    }
+    
+    /**
+     * Calculate clean/distortion mix based on saturation
+     * Returns [cleanVelocityRatio, distortionVelocityRatio]
+     * 100% sat: 0/100, 80% sat: 40/80, 60% sat: 80/40, 40% sat: 100/0
+     * Middle values use total 120% to maintain volume when mixing
+     */
+    private float[] getMixRatios(float saturation) {
+        // Exact ratios as specified:
+        // sat 1.0 (100%) -> clean 0%, dist 100% (total 100)
+        // sat 0.8 (80%)  -> clean 40%, dist 80% (total 120 - boosted)
+        // sat 0.6 (60%)  -> clean 80%, dist 40% (total 120 - boosted)
+        // sat 0.4 (40%)  -> clean 100%, dist 0% (total 100)
+        
+        if (saturation >= 0.95f) {
+            return new float[] {0.0f, 1.0f};        // 100%: 0/100
+        } else if (saturation >= 0.75f) {
+            return new float[] {0.4f, 0.8f};        // 80%: 40/80 (total 120)
+        } else if (saturation >= 0.55f) {
+            return new float[] {0.8f, 0.4f};        // 60%: 80/40 (total 120)
+        } else {
+            return new float[] {1.0f, 0.0f};        // 40%: 100/0
+        }
     }
     
     /**
@@ -289,25 +560,18 @@ public class SoundManager {
     }
     
     /**
-     * Detect which note (0-11) a color represents by finding closest match
+     * Detect which note (0-11) a color represents by matching HUE
+     * This works correctly for desaturated colors (pink maps to red/C, etc.)
      */
     public static int getNoteIndexFromColor(Color color) {
-        int bestMatch = 0;
-        int minDistance = Integer.MAX_VALUE;
+        float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
+        float hue = hsb[0]; // 0.0 to 1.0
         
-        for (int i = 0; i < NOTE_COLORS.length; i++) {
-            Color noteColor = NOTE_COLORS[i];
-            int dr = color.getRed() - noteColor.getRed();
-            int dg = color.getGreen() - noteColor.getGreen();
-            int db = color.getBlue() - noteColor.getBlue();
-            int distance = dr*dr + dg*dg + db*db;
-            
-            if (distance < minDistance) {
-                minDistance = distance;
-                bestMatch = i;
-            }
-        }
-        return bestMatch;
+        // Map hue to note index (0-11)
+        // Hue 0.0 = Red = C, Hue 0.0833 = Orange = C#, etc.
+        // Each note spans 1/12 of the hue wheel (0.0833)
+        int noteIndex = (int)Math.round(hue * 12) % 12;
+        return noteIndex;
     }
     
     /**
@@ -317,6 +581,7 @@ public class SoundManager {
         int index = getNoteIndexFromColor(color);
         return NOTE_NAMES[index];
     }
+    
     
     /**
      * Play a note on the specified channel
@@ -351,10 +616,40 @@ public class SoundManager {
     
     /**
      * Play piano note based on color, octave, and volume
+     * Uses saturation-based mixing between clean and distortion
      */
     public void playPiano(Color color, int octave, float volume) {
+        if (channels == null) return;
+        
         int noteIndex = getNoteIndexFromColor(color);
-        playPianoByIndex(noteIndex, octave, volume);
+        int midiNote = toMidiNote(noteIndex, octave);
+        int baseVelocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        
+        // Get saturation and calculate mix
+        float saturation = getSaturationFromColor(color);
+        float[] mix = getMixRatios(saturation);
+        int cleanVelocity = (int)(baseVelocity * mix[0]);
+        int distVelocity = (int)(baseVelocity * mix[1]);
+        
+        // Play clean sound on main synthesizer
+        if (cleanVelocity > 0) {
+            playNote(PIANO_CHANNEL, midiNote, cleanVelocity, 500);
+        }
+        
+        // Play distortion sound on separate synthesizer
+        if (distVelocity > 0 && distortionLoaded && distortionChannels != null && distortionPianoProgram >= 0) {
+            final int note = midiNote;
+            final int vel = distVelocity;
+            new Thread(() -> {
+                try {
+                    distortionChannels[PIANO_CHANNEL].noteOn(note, vel);
+                    Thread.sleep(500);
+                    distortionChannels[PIANO_CHANNEL].noteOff(note);
+                } catch (InterruptedException e) {
+                    distortionChannels[PIANO_CHANNEL].noteOff(note);
+                }
+            }).start();
+        }
     }
     
     // Track currently held piano note for sustain
@@ -368,17 +663,39 @@ public class SoundManager {
         if (channels == null) return;
         
         // Stop any currently playing note first
-        if (currentPianoNote >= 0) {
-            channels[PIANO_CHANNEL].noteOff(currentPianoNote);
-        }
+        stopPianoNoteInternal();
         
         int noteIndex = getNoteIndexFromColor(color);
         currentPianoNote = toMidiNote(noteIndex, octave);
-        int velocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        int baseVelocity = Math.max(1, Math.min(127, (int)(volume * 100)));
         
-        MidiChannel ch = channels[PIANO_CHANNEL];
-        ch.noteOn(currentPianoNote, velocity);
-        System.out.println("Piano note ON: " + currentPianoNote + " velocity: " + velocity);
+        // Get saturation and calculate mix
+        float saturation = getSaturationFromColor(color);
+        float[] mix = getMixRatios(saturation);
+        int cleanVelocity = (int)(baseVelocity * mix[0]);
+        int distVelocity = (int)(baseVelocity * mix[1]);
+        
+        // Play clean sound on main synthesizer
+        if (cleanVelocity > 0) {
+            channels[PIANO_CHANNEL].noteOn(currentPianoNote, cleanVelocity);
+        }
+        
+        // Play distortion sound on separate synthesizer
+        if (distVelocity > 0 && distortionLoaded && distortionChannels != null && distortionPianoProgram >= 0) {
+            distortionChannels[PIANO_CHANNEL].noteOn(currentPianoNote, distVelocity);
+        }
+        
+    }
+    
+    private void stopPianoNoteInternal() {
+        if (currentPianoNote >= 0) {
+            if (channels != null) {
+                channels[PIANO_CHANNEL].noteOff(currentPianoNote);
+            }
+            if (distortionLoaded && distortionChannels != null && distortionPianoProgram >= 0) {
+                distortionChannels[PIANO_CHANNEL].noteOff(currentPianoNote);
+            }
+        }
     }
     
     /**
@@ -387,9 +704,7 @@ public class SoundManager {
     public void stopPianoNote() {
         if (channels == null || currentPianoNote < 0) return;
         
-        MidiChannel ch = channels[PIANO_CHANNEL];
-        ch.noteOff(currentPianoNote);
-        System.out.println("Piano note OFF: " + currentPianoNote);
+        stopPianoNoteInternal();
         currentPianoNote = -1;
     }
     
@@ -419,8 +734,16 @@ public class SoundManager {
         
         int noteIndex = getNoteIndexFromColor(color);
         final int midiNote = toMidiNote(noteIndex, octave);
-        final int velocity = Math.max(1, Math.min(127, (int)(volume * 100)));
-        final MidiChannel ch = channels[GUITAR_CHANNEL];
+        final int baseVelocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        final MidiChannel cleanCh = channels[GUITAR_CHANNEL];
+        final MidiChannel distCh = (distortionLoaded && distortionChannels != null && distortionGuitarProgram >= 0) ? 
+            distortionChannels[GUITAR_CHANNEL] : null;
+        
+        // Get saturation and calculate mix
+        final float saturation = getSaturationFromColor(color);
+        final float[] mix = getMixRatios(saturation);
+        final int cleanVelocity = (int)(baseVelocity * mix[0]);
+        final int distVelocity = (int)(baseVelocity * mix[1]);
         
         // Check if we're re-triggering too fast
         long now = System.currentTimeMillis();
@@ -439,35 +762,40 @@ public class SoundManager {
         guitarNoteVersions.put(midiNote, thisVersion);
         
         // Send noteOff first to reset the note (allows clean re-trigger)
-        ch.noteOff(midiNote);
+        cleanCh.noteOff(midiNote);
+        if (distCh != null) distCh.noteOff(midiNote);
         
         // Small delay to ensure noteOff is processed
         try { Thread.sleep(5); } catch (InterruptedException e) {}
         
-        // Start the note
-        ch.noteOn(midiNote, velocity);
-        
-        // Schedule noteOff in background
+        // Play clean on main synthesizer, distortion on separate synthesizer
+        if (cleanVelocity > 0) {
+            cleanCh.noteOn(midiNote, cleanVelocity);
+        }
+        if (distVelocity > 0 && distCh != null) {
+            distCh.noteOn(midiNote, distVelocity);
+        }
+
+        // Schedule noteOff for both channels
         new Thread(() -> {
             try {
                 Thread.sleep(ringTime);
-                // Only send noteOff if this is still the latest trigger for this note
                 Long currentVersion = guitarNoteVersions.get(midiNote);
                 if (currentVersion != null && currentVersion == thisVersion) {
-                    ch.noteOff(midiNote);
+                    cleanCh.noteOff(midiNote);
+                    if (distCh != null) distCh.noteOff(midiNote);
                 }
-            } catch (InterruptedException e) {
-                // Interrupted - don't send noteOff
-            }
+            } catch (InterruptedException e) {}
         }).start();
     }
     
     /**
      * Play guitar note based on color, octave, and volume
+     * Uses overdrive based on color saturation
      */
     public void playGuitar(Color color, int octave, float volume) {
-        int noteIndex = getNoteIndexFromColor(color);
-        playGuitarByIndex(noteIndex, octave, volume);
+        // Use playGuitarWithDuration with default height for overdrive
+        playGuitarWithDuration(color, octave, volume, 200);
     }
     
     /**
@@ -593,11 +921,53 @@ public class SoundManager {
     }
     
     /**
+     * Play a note event from a recorded track
+     */
+    public void playNoteEvent(Track.NoteEvent event) {
+        if (channels == null) {
+            System.out.println("Cannot play note event: channels not initialized");
+            return;
+        }
+        
+        String type = event.instrumentType;
+        int noteIndex = event.noteIndex;
+        int octave = event.octave;
+        float velocity = event.velocity;
+        int durationMs = event.durationMs;
+        
+        // Calculate MIDI note number
+        int midiNote = (octave + 1) * 12 + noteIndex;
+        int vel = Math.max(1, (int)(velocity * 127));
+
+        switch (type) {
+            case "Piano":
+                playNote(PIANO_CHANNEL, midiNote, vel, durationMs > 0 ? durationMs : 500);
+                break;
+            case "Guitar":
+                playNote(GUITAR_CHANNEL, midiNote, vel, durationMs > 0 ? durationMs : 200);
+                break;
+            case "Drum":
+            case "Snare Drum":
+                // Map to appropriate drum sounds
+                int drumNote = 36; // Default bass drum
+                if (type.equals("Snare Drum")) {
+                    drumNote = 38; // Snare
+                }
+                channels[DRUM_CHANNEL].noteOn(drumNote, vel);
+                break;
+        }
+    }
+    
+    /**
      * Clean up resources
      */
     public void close() {
         if (synthesizer != null && synthesizer.isOpen()) {
             synthesizer.close();
         }
+        if (distortionSynth != null && distortionSynth.isOpen()) {
+            distortionSynth.close();
+        }
     }
 }
+

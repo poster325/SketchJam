@@ -1,5 +1,6 @@
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.*;
 
 public class SketchJamApp extends JFrame {
     
@@ -17,12 +18,14 @@ public class SketchJamApp extends JFrame {
     private ScalePreset scalePreset;
     private ScaleSelector scaleSelector;
     private SF2Manager sf2Manager;
+    private EQPanel eqPanel;
+    private FilePanel filePanel;
     private RecordPanel recordPanel;
     private UndoRedoManager undoRedoManager;
     
     public SketchJamApp() {
         setTitle("SketchJam");
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setResizable(false);
         
         // Create content panel with fixed size and double buffering
@@ -43,10 +46,17 @@ public class SketchJamApp extends JFrame {
         // Connect undo manager to canvas
         undoRedoManager.setCanvas(canvas);
         
-        // Create record panel (left side, at position 0, 0)
-        // Width: 200px, Height: padding(25) + BPM(25) + icons at 75 + tracks at 150 = 400
+        // Create file panel (top-left, at position 0, 0)
+        // Width: 200px (4 buttons * 50px), Height: 50px (no padding)
+        filePanel = new FilePanel();
+        filePanel.setBounds(0, 0, 200, 50);
+        filePanel.setCanvas(canvas);
+        contentPanel.add(filePanel);
+        
+        // Create record panel (left side, below file panel)
+        // Width: 200px, Height: BPM + icons + beats + tracks (7*50=350) = 525
         recordPanel = new RecordPanel();
-        recordPanel.setBounds(0, 0, 200, 400);
+        recordPanel.setBounds(0, 50, 200, 525);  // Start at y=50 (below FilePanel)
         recordPanel.setCanvas(canvas);
         canvas.setRecordPanel(recordPanel);
         contentPanel.add(recordPanel);
@@ -99,8 +109,44 @@ public class SketchJamApp extends JFrame {
         sf2Manager.setBounds(sf2ManagerX, sf2ManagerY, sf2ManagerWidth, sf2ManagerHeight);
         contentPanel.add(sf2Manager);
         
+        // Create EQ Panel (below SF2 Manager with 25px spacing)
+        int eqPanelWidth = 350;
+        int eqPanelHeight = 75;
+        int eqPanelX = paletteX;
+        int eqPanelY = sf2ManagerY + sf2ManagerHeight + 25; // 25px spacing
+        
+        eqPanel = new EQPanel(canvas);
+        eqPanel.setBounds(eqPanelX, eqPanelY, eqPanelWidth, eqPanelHeight);
+        contentPanel.add(eqPanel);
+        
+        // Create Logo Panel (bottom right corner)
+        // Position: 1550, 950 (window height 1050 - 100 height = 950)
+        int logoPanelWidth = 350;
+        int logoPanelHeight = 100;
+        int logoPanelX = paletteX;
+        int logoPanelY = WINDOW_HEIGHT - logoPanelHeight;
+        
+        LogoPanel logoPanel = new LogoPanel();
+        logoPanel.setBounds(logoPanelX, logoPanelY, logoPanelWidth, logoPanelHeight);
+        contentPanel.add(logoPanel);
+        
+        // Initialize FileManager with all components
+        FileManager.getInstance().setComponents(canvas, recordPanel, colorPalette, 
+            scaleSelector, sf2Manager, eqPanel);
+        
         // Add keyboard shortcuts for undo/redo
         setupKeyBindings();
+        
+        // Add window close listener for unsaved changes warning
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (FileManager.getInstance().checkUnsavedChanges(SketchJamApp.this)) {
+                    dispose();
+                    System.exit(0);
+                }
+            }
+        });
         
         // Pack to fit content + window decorations
         pack();
@@ -128,6 +174,36 @@ public class SketchJamApp extends JFrame {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 undoRedoManager.redo();
                 canvas.repaint();
+            }
+        });
+        
+        // Save: Ctrl+S
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .put(KeyStroke.getKeyStroke("control S"), "save");
+        getRootPane().getActionMap().put("save", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                filePanel.handleSave();
+            }
+        });
+        
+        // New: Ctrl+N
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .put(KeyStroke.getKeyStroke("control N"), "new");
+        getRootPane().getActionMap().put("new", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                filePanel.handleNew();
+            }
+        });
+        
+        // Open: Ctrl+O
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+            .put(KeyStroke.getKeyStroke("control O"), "open");
+        getRootPane().getActionMap().put("open", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                filePanel.handleOpen();
             }
         });
     }

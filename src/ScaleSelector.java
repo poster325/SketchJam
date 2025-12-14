@@ -87,6 +87,21 @@ public class ScaleSelector extends JPanel {
         return selectedType;
     }
     
+    public int getRootNote() {
+        return selectedRoot;
+    }
+    
+    public boolean isMajor() {
+        return selectedType == 0;
+    }
+    
+    public void setScale(int rootNote, boolean major) {
+        this.selectedRoot = rootNote % 12;
+        this.selectedType = major ? 0 : 1;
+        updateScalePreset();
+        repaint();
+    }
+    
     public String getScaleName() {
         return ROOT_NOTES[selectedRoot] + " " + (selectedType == 0 ? "Major" : "Minor");
     }

@@ -11,8 +11,9 @@ public class SketchCanvas extends JPanel {
     
     private static final int GRID_SIZE = 25;
     private static final int SNAP_SIZE = 5;
-    private static final Color GRID_COLOR = new Color(255, 255, 255, 25); // 10% white
-    private static final Color BACKGROUND_COLOR = new Color(0x32, 0x32, 0x32); // #323232
+    private Color gridColor = new Color(255, 255, 255, 25); // 10% white (changes with brightness)
+    private Color canvasBackground = new Color(0x32, 0x32, 0x32); // #323232 (changes with brightness)
+    private Color drumColor = Color.WHITE; // Drum/snare color (changes with brightness)
     
     // Drawing modes
     public enum DrawMode {
@@ -45,6 +46,7 @@ public class SketchCanvas extends JPanel {
     private boolean isResizing = false;
     private boolean isMarqueeSelecting = false;
     private boolean isPlayDragging = false;
+    private boolean isDuplicating = false; // Alt+drag to duplicate
     private Point elementStartPos = null;
     private Dimension elementStartSize = null;
     
@@ -60,9 +62,20 @@ public class SketchCanvas extends JPanel {
     private static final float GLOW_FADE_RATE = 0.05f; // How much to fade per tick
     private static final int GLOW_FADE_INTERVAL = 30; // ms between fade ticks
     
+    // Zoom and pan state
+    private double zoomLevel = 1.0;
+    private static final double MIN_ZOOM = 0.25;
+    private static final double MAX_ZOOM = 4.0;
+    private static final double ZOOM_STEP = 0.25;
+    private int panOffsetX = 0;
+    private int panOffsetY = 0;
+    private boolean isSpacePressed = false;
+    private boolean isPanning = false;
+    private Point panStart = null;
+    
     public SketchCanvas(UndoRedoManager undoRedoManager) {
         this.undoRedoManager = undoRedoManager;
-        setBackground(BACKGROUND_COLOR);
+        setBackground(canvasBackground);
         setFocusable(true);
         setDoubleBuffered(true); // Prevent flickering
         setOpaque(true); // Optimize painting
@@ -105,12 +118,29 @@ public class SketchCanvas extends JPanel {
         paint(g);
     }
     
+    /**
+     * Convert screen coordinates to canvas coordinates (accounting for zoom and pan)
+     */
+    private Point screenToCanvas(Point screenPoint) {
+        int x = (int)((screenPoint.x - panOffsetX) / zoomLevel);
+        int y = (int)((screenPoint.y - panOffsetY) / zoomLevel);
+        return new Point(x, y);
+    }
+    
     private void setupMouseListeners() {
         addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
                 requestFocusInWindow();
-                Point p = e.getPoint();
+                
+                // Handle panning with spacebar
+                if (isSpacePressed) {
+                    isPanning = true;
+                    panStart = e.getPoint();
+                    return;
+                }
+                
+                Point p = screenToCanvas(e.getPoint());
                 
                 // PLAY MODE: Different behavior for each instrument type
                 if (interactionMode == InteractionMode.PLAY) {
@@ -125,18 +155,22 @@ public class SketchCanvas extends JPanel {
                             SoundManager.getInstance().startPianoNote(clicked.getColor(), octave, clicked.getOpacity());
                             heldPianoElement = clicked;
                             triggerGlow(clicked);
+                            recordElement(clicked, 500); // Record with default duration
                         } else if (type.equals("Guitar")) {
                             // Guitar: Play with duration based on height
                             String mapped = clicked.getMappedValue();
                             int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
                             int height = clicked.getBounds().height;
+                            int durationMs = Math.max(100, height * 2);
                             SoundManager.getInstance().playGuitarWithDuration(clicked.getColor(), octave, clicked.getOpacity(), height);
                             triggerGlow(clicked);
                             lastElementDuringDrag = clicked;
+                            recordElement(clicked, durationMs);
                         } else {
                             // Drums/Snare: Click to play
                             SoundManager.getInstance().playElement(clicked);
                             triggerGlow(clicked);
+                            recordElement(clicked, 100);
                         }
                     } else {
                         lastElementDuringDrag = null;
@@ -168,12 +202,23 @@ public class SketchCanvas extends JPanel {
                 if (clicked != null && currentDrawMode == DrawMode.NONE) {
                     // Clear multiple selection and select single element
                     selectedElements.clear();
-                    selectedElement = clicked;
+                    
+                    // Alt+click to duplicate
+                    if (e.isAltDown()) {
+                        undoRedoManager.saveState(elements);
+                        DrawableElement duplicate = clicked.copy();
+                        elements.add(duplicate);
+                        selectedElement = duplicate;
+                        isDuplicating = true;
+                    } else {
+                        selectedElement = clicked;
+                        undoRedoManager.saveState(elements);
+                    }
+                    
                     isDragging = true;
                     dragStart = p;
                     elementStartPos = selectedElement.getPosition();
-                    undoRedoManager.saveState(elements);
-                    SoundManager.getInstance().playElement(clicked);
+                    SoundManager.getInstance().playElement(selectedElement);
                     repaint();
                     return;
                 }
@@ -202,6 +247,13 @@ public class SketchCanvas extends JPanel {
             
             @Override
             public void mouseReleased(MouseEvent e) {
+                // Handle panning release
+                if (isPanning) {
+                    isPanning = false;
+                    panStart = null;
+                    return;
+                }
+                
                 // PLAY MODE release
                 if (interactionMode == InteractionMode.PLAY) {
                     // Stop any held piano note
@@ -218,7 +270,7 @@ public class SketchCanvas extends JPanel {
                 
                 // OBJECT MODE release
                 if (isDrawing && dragStart != null) {
-                    Point end = snapToGrid(e.getPoint());
+                    Point end = snapToGrid(screenToCanvas(e.getPoint()));
                     DrawableElement newElement = createElementFromDrag(dragStart, end);
                     if (newElement != null) {
                         undoRedoManager.saveState(elements);
@@ -254,6 +306,7 @@ public class SketchCanvas extends JPanel {
                 isResizing = false;
                 isMarqueeSelecting = false;
                 isPlayDragging = false;
+                isDuplicating = false;
                 activeHandle = DrawableElement.HANDLE_NONE;
                 dragStart = null;
                 dragCurrent = null;
@@ -266,7 +319,18 @@ public class SketchCanvas extends JPanel {
         addMouseMotionListener(new MouseMotionAdapter() {
             @Override
             public void mouseDragged(MouseEvent e) {
-                Point p = e.getPoint();
+                // Handle panning with spacebar
+                if (isPanning && panStart != null) {
+                    int dx = e.getX() - panStart.x;
+                    int dy = e.getY() - panStart.y;
+                    panOffsetX += dx;
+                    panOffsetY += dy;
+                    panStart = e.getPoint();
+                    repaint();
+                    return;
+                }
+                
+                Point p = screenToCanvas(e.getPoint());
                 
                 // PLAY MODE: Different drag behavior for each instrument
                 if (interactionMode == InteractionMode.PLAY && isPlayDragging) {
@@ -636,6 +700,10 @@ public class SketchCanvas extends JPanel {
         getActionMap().put("objectMode", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                // Don't allow switching to Edit mode while recording or playing
+                if (recordPanel != null && (recordPanel.isRecording() || recordPanel.isPlaying())) {
+                    return;
+                }
                 interactionMode = InteractionMode.OBJECT;
                 repaint();
             }
@@ -646,6 +714,10 @@ public class SketchCanvas extends JPanel {
         getActionMap().put("playMode", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                // Don't allow switching to Edit mode while recording or playing
+                if (recordPanel != null && (recordPanel.isRecording() || recordPanel.isPlaying())) {
+                    return;
+                }
                 interactionMode = InteractionMode.PLAY;
                 selectedElement = null;
                 selectedElements.clear();
@@ -692,6 +764,127 @@ public class SketchCanvas extends JPanel {
                 }
             }
         });
+        
+        // Ctrl + (=) - Zoom in
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, InputEvent.CTRL_DOWN_MASK), "zoomIn");
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_PLUS, InputEvent.CTRL_DOWN_MASK), "zoomIn");
+        getActionMap().put("zoomIn", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                zoomLevel = Math.min(MAX_ZOOM, zoomLevel + ZOOM_STEP);
+                System.out.println("Zoom: " + (int)(zoomLevel * 100) + "%");
+                repaint();
+            }
+        });
+        
+        // Ctrl - - Zoom out
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, InputEvent.CTRL_DOWN_MASK), "zoomOut");
+        getActionMap().put("zoomOut", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                zoomLevel = Math.max(MIN_ZOOM, zoomLevel - ZOOM_STEP);
+                System.out.println("Zoom: " + (int)(zoomLevel * 100) + "%");
+                repaint();
+            }
+        });
+        
+        // 1 - Reset zoom and pan to original
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_1, 0), "resetView");
+        getActionMap().put("resetView", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                zoomLevel = 1.0;
+                panOffsetX = 0;
+                panOffsetY = 0;
+                System.out.println("View reset to original");
+                repaint();
+            }
+        });
+        
+        // Space pressed - enable panning mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, false), "spacePressed");
+        getActionMap().put("spacePressed", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isSpacePressed = true;
+                setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+            }
+        });
+        
+        // Space released - disable panning mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, true), "spaceReleased");
+        getActionMap().put("spaceReleased", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isSpacePressed = false;
+                isPanning = false;
+                panStart = null;
+                setCursor(Cursor.getDefaultCursor());
+            }
+        });
+        
+        // T - Trigger play on element under mouse (in Instrument/Play mode only)
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_T, 0, false), "triggerPlay");
+        getActionMap().put("triggerPlay", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (interactionMode != InteractionMode.PLAY) return;
+                
+                // Get mouse position and find element under it
+                Point mousePos = getMousePosition();
+                if (mousePos == null) return;
+                
+                Point canvasPos = screenToCanvas(mousePos);
+                DrawableElement element = getElementAt(canvasPos);
+                
+                if (element != null) {
+                    playElementByType(element);
+                    triggerGlow(element);
+                }
+            }
+        });
+        
+        // T released - stop piano note if held
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_T, 0, true), "triggerPlayReleased");
+        getActionMap().put("triggerPlayReleased", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (interactionMode != InteractionMode.PLAY) return;
+                
+                // Stop any held piano note
+                if (heldPianoElement != null) {
+                    SoundManager.getInstance().stopPianoNote();
+                    heldPianoElement = null;
+                }
+            }
+        });
+    }
+    
+    /**
+     * Play an element based on its type (used by both mouse and T key)
+     */
+    private void playElementByType(DrawableElement element) {
+        String type = element.getElementType();
+        
+        if (type.equals("Piano")) {
+            // Piano: Start sustain
+            String mapped = element.getMappedValue();
+            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+            SoundManager.getInstance().startPianoNote(element.getColor(), octave, element.getOpacity());
+            heldPianoElement = element;
+            recordElement(element, 0);
+        } else if (type.equals("Guitar")) {
+            // Guitar: Play with duration based on height
+            String mapped = element.getMappedValue();
+            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+            int height = element.getBounds().height;
+            SoundManager.getInstance().playGuitarWithDuration(element.getColor(), octave, element.getOpacity(), height);
+            recordElement(element, height * 2);
+        } else {
+            // Drums/Snare: Just play
+            SoundManager.getInstance().playElement(element);
+            recordElement(element, 100);
+        }
     }
     
     /**
@@ -754,6 +947,56 @@ public class SketchCanvas extends JPanel {
         this.recordPanel = recordPanel;
     }
     
+    /**
+     * Set the interaction mode (called from RecordPanel when play/record is toggled)
+     */
+    public void setInteractionMode(InteractionMode mode) {
+        this.interactionMode = mode;
+        repaint();
+    }
+    
+    public InteractionMode getInteractionMode() {
+        return interactionMode;
+    }
+    
+    /**
+     * Record an element event if recording is active
+     */
+    private void recordElement(DrawableElement element, int durationMs) {
+        // Record if recording is active
+        if (recordPanel != null && recordPanel.isRecording()) {
+            TrackManager trackManager = recordPanel.getTrackManager();
+            if (trackManager != null) {
+                String type = element.getElementType();
+                int noteIndex = getNoteIndexFromColor(element.getColor());
+                int octave = getOctaveFromElement(element);
+                float velocity = element.getOpacity();
+                
+                trackManager.recordEvent(type, noteIndex, octave, velocity, durationMs);
+            }
+        }
+    }
+    
+    private int getNoteIndexFromColor(Color color) {
+        // Find closest matching note color (0-11 for C to B)
+        float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
+        // Map hue (0-1) to note index (0-11)
+        return (int)(hsb[0] * 12) % 12;
+    }
+    
+    private int getOctaveFromElement(DrawableElement element) {
+        String mapped = element.getMappedValue();
+        if (mapped != null && mapped.contains("Octave")) {
+            try {
+                String[] parts = mapped.split(",")[0].split(" ");
+                return Integer.parseInt(parts[1]);
+            } catch (Exception e) {
+                return 3; // Default octave
+            }
+        }
+        return 3;
+    }
+    
     public DrawableElement getSelectedElement() {
         return selectedElement;
     }
@@ -764,6 +1007,18 @@ public class SketchCanvas extends JPanel {
     
     public List<DrawableElement> getElements() {
         return elements;
+    }
+    
+    public void clearElements() {
+        elements.clear();
+        selectedElement = null;
+        selectedElements.clear();
+        repaint();
+    }
+    
+    public void addElement(DrawableElement element) {
+        elements.add(element);
+        repaint();
     }
     
     public void setElements(List<DrawableElement> elements) {
@@ -779,6 +1034,13 @@ public class SketchCanvas extends JPanel {
         super.paintComponent(g);
         Graphics2D g2d = (Graphics2D) g;
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        
+        // Save original transform
+        java.awt.geom.AffineTransform originalTransform = g2d.getTransform();
+        
+        // Apply zoom and pan transformation
+        g2d.translate(panOffsetX, panOffsetY);
+        g2d.scale(zoomLevel, zoomLevel);
         
         // Draw grid
         drawGrid(g2d);
@@ -819,8 +1081,26 @@ public class SketchCanvas extends JPanel {
             drawMarquee(g2d);
         }
         
-        // Draw mode indicator
+        // Restore original transform for UI elements (mode indicator stays fixed)
+        g2d.setTransform(originalTransform);
+        
+        // Draw mode indicator (fixed position, not affected by zoom/pan)
         drawModeIndicator(g2d);
+        
+        // Draw zoom level indicator
+        drawZoomIndicator(g2d);
+    }
+    
+    private void drawZoomIndicator(Graphics2D g2d) {
+        if (zoomLevel != 1.0 || panOffsetX != 0 || panOffsetY != 0) {
+            String zoomText = (int)(zoomLevel * 100) + "%";
+            g2d.setFont(FontManager.getRegular(12));
+            g2d.setColor(new Color(0, 0, 0, 180));
+            int y = 75 + 25; // Below mode indicator
+            g2d.fillRect(0, y, 75, 25);
+            g2d.setColor(Color.WHITE);
+            g2d.drawString(zoomText, 10, y + 17);
+        }
     }
     
     private void drawMultiSelectBox(Graphics2D g2d, DrawableElement elem) {
@@ -966,11 +1246,11 @@ public class SketchCanvas extends JPanel {
         int currentY = 0;           // Start at grid origin
         int textY;
         
-        // Show play mode from RecordPanel (playback with metronome)
+        // Show preview mode from RecordPanel (playback without metronome)
         if (recordPanel != null && recordPanel.isPlaying()) {
-            String playText = "PLAY MODE";
+            String playText = "PREVIEW MODE";
             int playWidth = fm.stringWidth(playText);
-            g2d.setColor(new Color(0, 128, 0, 200)); // Green
+            g2d.setColor(new Color(0, 128, 128, 200)); // Teal
             g2d.fillRect(BOX_X, currentY, playWidth + 20, BOX_HEIGHT);
             g2d.setColor(Color.WHITE);
             textY = currentY + (BOX_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
@@ -1027,25 +1307,69 @@ public class SketchCanvas extends JPanel {
     }
     
     private void drawGrid(Graphics2D g2d) {
-        g2d.setColor(GRID_COLOR);
+        g2d.setColor(gridColor);
         g2d.setStroke(new BasicStroke(1));
         
-        int width = getWidth();
-        int height = getHeight();
+        // Calculate visible area in canvas coordinates (accounting for zoom and pan)
+        // The transform is already applied, so we need to find what screen area maps to
+        int screenWidth = getWidth();
+        int screenHeight = getHeight();
         
-        // Draw vertical lines (use width-1 to ensure rightmost line is visible)
-        for (int x = 0; x < width; x += GRID_SIZE) {
-            g2d.drawLine(x, 0, x, height);
-        }
-        // Draw final vertical line 1 pixel from edge to ensure visibility
-        g2d.drawLine(width - 1, 0, width - 1, height);
+        // Calculate the visible canvas area bounds
+        int startX = (int)((-panOffsetX / zoomLevel) - GRID_SIZE);
+        int startY = (int)((-panOffsetY / zoomLevel) - GRID_SIZE);
+        int endX = (int)((screenWidth - panOffsetX) / zoomLevel) + GRID_SIZE;
+        int endY = (int)((screenHeight - panOffsetY) / zoomLevel) + GRID_SIZE;
         
-        // Draw horizontal lines (use height-1 to ensure bottom line is visible)
-        for (int y = 0; y < height; y += GRID_SIZE) {
-            g2d.drawLine(0, y, width, y);
+        // Snap to grid
+        startX = (startX / GRID_SIZE) * GRID_SIZE;
+        startY = (startY / GRID_SIZE) * GRID_SIZE;
+        
+        // Draw vertical lines across the extended visible area
+        for (int x = startX; x <= endX; x += GRID_SIZE) {
+            g2d.drawLine(x, startY, x, endY);
         }
-        // Draw final horizontal line 1 pixel from edge to ensure visibility
-        g2d.drawLine(0, height - 1, width, height - 1);
+        
+        // Draw horizontal lines across the extended visible area
+        for (int y = startY; y <= endY; y += GRID_SIZE) {
+            g2d.drawLine(startX, y, endX, y);
+        }
+    }
+    
+    /**
+     * Set canvas background color (called from EQ panel)
+     */
+    public void setCanvasBackground(Color color) {
+        this.canvasBackground = color;
+        setBackground(color);
+        repaint();
+    }
+    
+    /**
+     * Set element colors based on brightness (grid and drums)
+     * @param useDark true for dark elements (light background), false for light elements (dark background)
+     */
+    public void setElementColors(boolean useDark) {
+        if (useDark) {
+            gridColor = new Color(0, 0, 0, 25); // 10% black
+            drumColor = Color.BLACK;
+        } else {
+            gridColor = new Color(255, 255, 255, 25); // 10% white
+            drumColor = Color.WHITE;
+        }
+        
+        // Update existing drum elements
+        for (DrawableElement element : elements) {
+            if (element instanceof DrumElement || element instanceof SnareDrumElement) {
+                element.setColor(drumColor);
+            }
+        }
+        
+        repaint();
+    }
+    
+    public Color getDrumColor() {
+        return drumColor;
     }
     
     public UndoRedoManager getUndoRedoManager() {

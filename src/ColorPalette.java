@@ -97,6 +97,23 @@ public class ColorPalette extends JPanel {
         repaint();
     }
     
+    public int getSelectedCol() {
+        return selectedCol;
+    }
+    
+    public int getSelectedRow() {
+        return selectedRow;
+    }
+    
+    public void setSelection(int col, int row) {
+        if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+            selectedCol = col;
+            selectedRow = row;
+            canvas.setCurrentColor(colorMatrix[row][col]);
+            repaint();
+        }
+    }
+    
     /**
      * Get the note name for a given column index
      */

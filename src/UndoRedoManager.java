@@ -40,6 +40,9 @@ public class UndoRedoManager {
         
         // Clear redo stack when new action is performed
         redoStack.clear();
+        
+        // Mark project as having unsaved changes
+        FileManager.getInstance().markUnsaved();
     }
     
     /**
