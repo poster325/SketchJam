@@ -957,44 +957,117 @@ public class SoundManager {
         playMetronomeClick(false);
     }
 
+    private static float unpackSaturation(int packed) {
+        int satMilli = (packed >>> 16) & 0xFFFF;
+        return satMilli / 1000f;
+    }
+
+    private static int unpackHeight(int packed) {
+        return packed & 0xFFFF;
+    }
+
+
+    private void playGuitarFromEvent(int midiNote, float volume, float saturation, int heightPx) {
+        if (channels == null) return;
+
+        final int baseVelocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        final MidiChannel cleanCh = channels[GUITAR_CHANNEL];
+        final MidiChannel distCh =
+            (distortionLoaded && distortionChannels != null && distortionGuitarProgram >= 0)
+                ? distortionChannels[GUITAR_CHANNEL]
+                : null;
+
+        final float[] mix = getMixRatios(saturation);
+        final int cleanVelocity = (int)(baseVelocity * mix[0]);
+        final int distVelocity  = (int)(baseVelocity * mix[1]);
+
+        long now = System.currentTimeMillis();
+        Long lastPlay = guitarLastPlayTime.get(midiNote);
+        if (lastPlay != null && (now - lastPlay) < MIN_RETRIGGER_INTERVAL) return;
+        guitarLastPlayTime.put(midiNote, now);
+
+        final int ringTime = (int)(50 * Math.pow(40, (heightPx - 100) / 400.0));
+        final long thisVersion = ++guitarNoteCounter;
+        guitarNoteVersions.put(midiNote, thisVersion);
+
+        cleanCh.noteOff(midiNote);
+        if (distCh != null) distCh.noteOff(midiNote);
+        try { Thread.sleep(5); } catch (InterruptedException ignored) {}
+
+        if (cleanVelocity > 0) cleanCh.noteOn(midiNote, cleanVelocity);
+        if (distVelocity > 0 && distCh != null) distCh.noteOn(midiNote, distVelocity);
+
+        new Thread(() -> {
+            try {
+                Thread.sleep(ringTime);
+                Long currentVersion = guitarNoteVersions.get(midiNote);
+                if (currentVersion != null && currentVersion == thisVersion) {
+                    cleanCh.noteOff(midiNote);
+                    if (distCh != null) distCh.noteOff(midiNote);
+                }
+            } catch (InterruptedException ignored) {}
+        }).start();
+    }
 
     
     /**
      * Play a note event from a recorded track
      */
     public void playNoteEvent(Track.NoteEvent event) {
-        if (channels == null) {
-            System.out.println("Cannot play note event: channels not initialized");
-            return;
-        }
-        
+        if (channels == null) return;
+
         String type = event.instrumentType;
-        int noteIndex = event.noteIndex;
-        int octave = event.octave;
-        float velocity = event.velocity;
-        int durationMs = event.durationMs;
-        
-        // Calculate MIDI note number
-        int midiNote = (octave + 1) * 12 + noteIndex;
-        int vel = Math.max(1, (int)(velocity * 127));
+        int midiNote = event.midiNote;
+        int drumNote = event.drumKey;
+        float volume = event.velocity;
 
         switch (type) {
-            case "Piano":
-                playNote(PIANO_CHANNEL, midiNote, vel, durationMs > 0 ? durationMs : 500);
+            case "Piano": {
+                int vel = Math.max(1, Math.min(127, (int)(volume * 127)));
+                playNote(PIANO_CHANNEL, midiNote, vel, event.durationMs > 0 ? event.durationMs : 500);
                 break;
-            case "Guitar":
-                playNote(GUITAR_CHANNEL, midiNote, vel, durationMs > 0 ? durationMs : 200);
+            }
+
+            case "Guitar": {
+                int packed = event.durationMs;
+                float saturation = unpackSaturation(packed);
+                int heightPx = unpackHeight(packed);
+
+                playGuitarFromEvent(midiNote, volume, saturation, heightPx);
                 break;
+            }
+
             case "Drum":
-            case "Snare Drum":
-                // Map to appropriate drum sounds
-                int drumNote = 36; // Default bass drum
-                if (type.equals("Snare Drum")) {
-                    drumNote = 38; // Snare
-                }
-                channels[DRUM_CHANNEL].noteOn(drumNote, vel);
+            case "Snare Drum": {
+                int vel = Math.max(1, Math.min(127, (int)(volume * 100)));
+                playNote(DRUM_CHANNEL, drumNote, vel, 300);
                 break;
+            }
         }
+    }
+
+    private int mapDrumKeyToMidi(String type, int drumKey) {
+        // 예시: 킥/스네어 각각에 대해 size variant를 다른 MIDI note로 매핑
+        if (type.equals("Snare Drum")) {
+            // snare variants
+            return switch (drumKey) {
+                case 0 -> SNARE_CENTER;  // Snare
+                case 1 -> 40;  // Electric Snare
+                default -> SNARE_RIM; // Side Stick 등
+            };
+        } else {
+            // kick variants
+            return switch (drumKey) {
+                case 0 -> BASS_DRUM;  // Bass Drum 1
+                case 1 -> 35;  // Acoustic Bass Drum
+                default -> 41; // Low Floor Tom 같은 다른 저역 타격으로 대체 가능
+            };
+        }
+    }
+
+    public static int uiPitchToMidi(int uiOctave, int noteIndex) {
+        int midiOctave = uiOctave; 
+        return (midiOctave + 1) * 12 + noteIndex; // C4=60 컨벤션이라면 이렇게
     }
     
     /**

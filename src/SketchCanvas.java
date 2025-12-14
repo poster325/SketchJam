@@ -985,26 +985,136 @@ public class SketchCanvas extends JPanel {
     }
 
 
+    private int getUiOctaveFromElement(DrawableElement element) {
+        String mapped = element.getMappedValue();
+        if (mapped == null) return 3;
+
+        try {
+            // 네 mapped 포맷에 맞춰 여기만 정확히 파싱하면 됨
+            // 예: "C 3, ..." 혹은 "C 3"
+            String[] parts = mapped.split(",")[0].trim().split(" ");
+            return Integer.parseInt(parts[1]);
+        } catch (Exception e) {
+            return 3;
+        }
+    }
+
+    private int getDrumKeyFromSize(DrawableElement element) {
+        Rectangle b = element.getBounds();
+        int size = Math.max(b.width, b.height);
+
+        // 너희 DrumElement의 스냅 규칙이 있으면 거기에 맞춰 구간을 잡는 게 좋음.
+        // 일단 예시:
+        if (size < 50) return 0;      // small
+        if (size < 100) return 1;     // mid
+        return 2;                     // big
+    }
+
+    private int drumKeyFromMapped(String mapped) {
+        if (mapped == null) return 0;
+        String m = mapped.toLowerCase().replace(" ", "_");
+        switch (m) {
+            case "high_tom":  return 0;
+            case "mid_tom":   return 1;
+            case "floor_tom": return 2;
+            case "bass_drum": return 3;
+            default:          return 3;
+        }
+    }
+
+    
+    private int snareKeyFromMapped(String mapped) {
+        if (mapped == null) return 1;
+        String m = mapped.toLowerCase().replace(" ", "_");
+        switch (m) {
+            case "snare_rim":
+            case "rim":
+            case "rimshot":
+                return 0;
+            case "snare_center":
+            case "center":
+            default:
+                return 1;
+        }
+    }
+
+
+    private static int packGuitarParams(float saturation, int heightPx) {
+        int satMilli = Math.max(0, Math.min(65535, (int)(saturation * 1000f)));
+        int h = Math.max(0, Math.min(65535, heightPx));
+        return (satMilli << 16) | (h & 0xFFFF);
+    }
+    private int mapDrumToMidi(String mapped) {
+        String m = mapped.trim().toLowerCase();
+        switch (m) {
+            case "high tom": case "high_tom": return 50; // HIGH_TOM
+            case "mid tom":  case "mid_tom":  return 47; // MID_TOM
+            case "floor tom":case "floor_tom":return 43; // FLOOR_TOM
+            case "bass drum":case "bass_drum":
+            default: return 36; // BASS_DRUM
+        }
+    }
+
+    private int mapSnareToMidi(String mapped) {
+        String m = mapped.trim().toLowerCase();
+        switch (m) {
+            case "rim": case "snare rim": case "snare_rim": return 37; // SNARE_RIM
+            case "center": case "snare center": case "snare_center":
+            default: return 38; // SNARE_CENTER
+        }
+    }
+
 
     /**
      * Record an element event if recording is active
      */
     private void recordElement(DrawableElement element, int durationMs) {
-        // Record if recording is active
-        if (recordPanel != null && recordPanel.isRecording()) {
-            TrackManager trackManager = recordPanel.getTrackManager();
-            if (trackManager != null) {
-                String type = element.getElementType();
-                int noteIndex = getNoteIndexFromColor(element.getColor());
-                int octave = getOctaveFromElement(element);
-                float velocity = element.getOpacity();
-                
-                int variant = getVariantFromElement(element);
-                
-                trackManager.recordEvent(
-                    type, noteIndex, octave, velocity, durationMs, variant
-                );
-            }
+        if (recordPanel == null || !recordPanel.isRecording()) return;
+
+        TrackManager tm = recordPanel.getTrackManager();
+        if (tm == null) return;
+
+        String type = element.getElementType();
+        float velocity = element.getOpacity();
+
+        if (type.equals("Guitar")) {
+            // 1) midiNote 계산 (실시간 재생이랑 동일 규칙으로)
+            String mapped = element.getMappedValue();
+            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]); // 너희 코드 방식 유지
+            int noteIndex = getNoteIndexFromColor(element.getColor());         // 기존 함수
+            int midiNote = (octave + 1) * 12 + noteIndex;                      // SoundManager와 규칙 통일
+
+            // 2) 기타 톤에 필요한 saturation + heightPx 저장
+            float saturation = SoundManager.getInstance().getSaturationFromColor(element.getColor());     // 아래에 추가 필요
+            int heightPx = element.getBounds().height;
+
+            int packed = packGuitarParams(saturation, heightPx);
+
+            tm.recordEvent("Guitar", midiNote, 0, velocity, packed);
+            return;
+        }
+
+        if (type.equals("Piano")) {
+            // Piano는 midiNote만 있으면 충분
+            String mapped = element.getMappedValue();
+            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+            int noteIndex = getNoteIndexFromColor(element.getColor());
+            int midiNote = (octave + 1) * 12 + noteIndex;
+
+            tm.recordEvent("Piano", midiNote, 0, velocity, 500);
+            return;
+        }
+
+        if (type.equals("Drum")) {
+            // drumKey에 실제 드럼 MIDI note를 넣어버리기 (재생도 동일)
+            int drumNote = mapDrumToMidi(element.getMappedValue()); // 아래에서 정의
+            tm.recordEvent("Drum", 0, drumNote, velocity, 0);
+            return;
+        }
+
+        if (type.equals("Snare Drum")) {
+            int drumNote = mapSnareToMidi(element.getMappedValue()); // 아래에서 정의
+            tm.recordEvent("Snare Drum", 0, drumNote, velocity, 0);
         }
     }
     

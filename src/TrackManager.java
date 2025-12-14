@@ -272,22 +272,17 @@ public class TrackManager {
     /**
      * Record a note event
      */
-    public void recordEvent(String instrumentType, int noteIndex, 
-        int octave, float velocity, int durationMs, int variant) {
-        if (!isRecording || currentRecordingTrack == null) {
-            System.out.println("Cannot record: isRecording=" + isRecording + ", hasTrack=" + (currentRecordingTrack != null));
-            return;
-        }
-        
+    public void recordEvent(String instrumentType, int midiNote, int drumKey, 
+        float velocity, int durationMs) {
+        if (!isRecording || currentRecordingTrack == null) return;
+
         long timestamp = System.currentTimeMillis() - recordingStartTime;
-        
-        // In loop mode, wrap timestamp within loop duration
-        if (isLooping) {
-            timestamp = timestamp % loopDurationMs;
-        }
-        
+        if (isLooping) timestamp = timestamp % loopDurationMs;
+
         Track.NoteEvent event = new Track.NoteEvent(
-            timestamp, instrumentType, noteIndex, octave, velocity, durationMs, variant
+            timestamp, instrumentType,
+            midiNote, drumKey,
+            velocity, durationMs
         );
         currentRecordingTrack.addEvent(event);
     }

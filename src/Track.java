@@ -11,32 +11,25 @@ public class Track {
      * A single note event in the track
      */
     public static class NoteEvent {
-        public final long timestampMs;  // Time from track start in milliseconds
-        public final String instrumentType;  // "Piano", "Guitar", "Drum", "Snare Drum"
-        public final int noteIndex;  // 0-11 for chromatic notes (C=0, C#=1, etc.)
-        public final int octave;  // 1-5
-        public final float velocity;  // 0.0-1.0 (opacity)
-        public final int durationMs;  // Duration for guitar notes
+        public final long timestampMs;
+        public final String instrumentType;
 
-        // 추가
-        public final int variant;   // 드럼/스네어/기타/피아노 공용
+        // ✅ 최종 재생 단위로 저장
+        public final int midiNote;   // Piano/Guitar용 (예: 60 = C4)
+        public final int drumKey;    // Drum/Snare용 (0=small,1=mid,2=big 등)
 
-        public NoteEvent(
-            long timestampMs,
-            String instrumentType,
-            int noteIndex,
-            int octave,
-            float velocity,
-            int durationMs,
-            int variant
-        ) {
+        public final float velocity;
+        public final int durationMs;
+
+        public NoteEvent(long timestampMs, String instrumentType,
+                        int midiNote, int drumKey,
+                        float velocity, int durationMs) {
             this.timestampMs = timestampMs;
             this.instrumentType = instrumentType;
-            this.noteIndex = noteIndex;
-            this.octave = octave;
+            this.midiNote = midiNote;
+            this.drumKey = drumKey;
             this.velocity = velocity;
             this.durationMs = durationMs;
-            this.variant = variant;
         }
     }
     
@@ -120,11 +113,10 @@ public class Track {
             newEvents.add(new NoteEvent(
                 newTs,
                 e.instrumentType,
-                e.noteIndex,
-                e.octave,
+                e.midiNote,
+                e.drumKey,
                 e.velocity,
-                newDur,
-                e.variant
+                newDur
             ));
         }
 

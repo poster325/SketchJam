@@ -393,14 +393,15 @@ public class FileManager {
     
     /**
      * Render a single note to the audio buffer
-     */
+    */
     private void renderNoteToBuffer(byte[] buffer, AudioFormat format, Track.NoteEvent event) {
         float sampleRate = format.getSampleRate();
-        int startSample = (int)(sampleRate * event.timestampMs / 1000);
-        int durationSamples = (int)(sampleRate * Math.max(100, event.durationMs) / 1000);
-        
-        // Calculate frequency from note
-        int midiNote = (event.octave + 1) * 12 + event.noteIndex;
+        int startSample = (int)(sampleRate * event.timestampMs / 1000.0);
+        int durationSamples = (int)(sampleRate * Math.max(100, event.durationMs) / 1000.0);
+
+        // ✅ event에서 바로 MIDI를 가져옴 (octave/noteIndex 계산 삭제)
+        int midiNote = event.midiNote;
+
         double frequency = 440.0 * Math.pow(2.0, (midiNote - 69) / 12.0);
         
         // Generate simple sine wave

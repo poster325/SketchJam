@@ -124,27 +124,22 @@ public class ProjectData implements Serializable {
         
         public long timestampMs;
         public String instrumentType;
-        public int noteIndex;
-        public int octave;
+        public int midiNote;
+        public int drumKey;
         public float velocity;
         public int durationMs;
-        public int variant;
-        
-        public NoteEventData() {}
-        
+
         public NoteEventData(Track.NoteEvent event) {
-            this.timestampMs = event.timestampMs;
-            this.instrumentType = event.instrumentType;
-            this.noteIndex = event.noteIndex;
-            this.octave = event.octave;
-            this.velocity = event.velocity;
-            this.durationMs = event.durationMs;
-            this.variant = event.variant;
+            timestampMs = event.timestampMs;
+            instrumentType = event.instrumentType;
+            midiNote = event.midiNote;
+            drumKey = event.drumKey;
+            velocity = event.velocity;
+            durationMs = event.durationMs;
         }
-        
+
         public Track.NoteEvent toNoteEvent() {
-            return new Track.NoteEvent(timestampMs, instrumentType, noteIndex, 
-                octave, velocity, durationMs, variant);
+            return new Track.NoteEvent(timestampMs, instrumentType, midiNote, drumKey, velocity, durationMs);
         }
     }
     
