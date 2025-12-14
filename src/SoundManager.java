@@ -1009,6 +1009,83 @@ public class SoundManager {
         }).start();
     }
 
+
+    public synchronized void playGuitarMidiWithDuration(int midiNote, Color color, float volume, int heightPx) {
+        if (channels == null) return;
+
+        final int baseVelocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        final MidiChannel cleanCh = channels[GUITAR_CHANNEL];
+        final MidiChannel distCh = (distortionLoaded && distortionChannels != null && distortionGuitarProgram >= 0)
+                ? distortionChannels[GUITAR_CHANNEL] : null;
+
+        // ✅ color 기반 saturation 그대로 사용
+        final float saturation = getSaturationFromColor(color);
+        final float[] mix = getMixRatios(saturation);
+        final int cleanVelocity = (int)(baseVelocity * mix[0]);
+        final int distVelocity  = (int)(baseVelocity * mix[1]);
+
+        // 리트리거 제한 그대로
+        long now = System.currentTimeMillis();
+        Long lastPlay = guitarLastPlayTime.get(midiNote);
+        if (lastPlay != null && (now - lastPlay) < MIN_RETRIGGER_INTERVAL) return;
+        guitarLastPlayTime.put(midiNote, now);
+
+        // height 기반 링타임 그대로
+        final int ringTime = (int)(50 * Math.pow(40, (heightPx - 100) / 400.0));
+
+        final long thisVersion = ++guitarNoteCounter;
+        guitarNoteVersions.put(midiNote, thisVersion);
+
+        cleanCh.noteOff(midiNote);
+        if (distCh != null) distCh.noteOff(midiNote);
+        try { Thread.sleep(5); } catch (InterruptedException e) {}
+
+        if (cleanVelocity > 0) cleanCh.noteOn(midiNote, cleanVelocity);
+        if (distVelocity > 0 && distCh != null) distCh.noteOn(midiNote, distVelocity);
+
+        new Thread(() -> {
+            try {
+                Thread.sleep(ringTime);
+                Long currentVersion = guitarNoteVersions.get(midiNote);
+                if (currentVersion != null && currentVersion == thisVersion) {
+                    cleanCh.noteOff(midiNote);
+                    if (distCh != null) distCh.noteOff(midiNote);
+                }
+            } catch (InterruptedException e) {}
+        }).start();
+    }
+
+
+    private void playLayeredNote(int channelIndex, int midiNote, int baseVel, int durationMs, Color color) {
+        if (channels == null || channelIndex < 0 || channelIndex >= channels.length) return;
+
+        // saturation -> (clean/dist) mix
+        float saturation = getSaturationFromColor(color);
+        float[] mix = getMixRatios(saturation);
+
+        int cleanVel = Math.max(0, Math.min(127, (int)(baseVel * mix[0])));
+        int distVel  = Math.max(0, Math.min(127, (int)(baseVel * mix[1])));
+
+        MidiChannel cleanCh = channels[channelIndex];
+        MidiChannel distCh  = (distortionLoaded && distortionChannels != null
+                && channelIndex < distortionChannels.length
+                && distortionChannels[channelIndex] != null)
+                ? distortionChannels[channelIndex]
+                : null;
+
+        if (cleanVel > 0) cleanCh.noteOn(midiNote, cleanVel);
+        if (distVel > 0 && distCh != null) distCh.noteOn(midiNote, distVel);
+
+        final int dur = (durationMs > 0) ? durationMs : 500;
+        new Thread(() -> {
+            try {
+                Thread.sleep(dur);
+                cleanCh.noteOff(midiNote);
+                if (distCh != null) distCh.noteOff(midiNote);
+            } catch (InterruptedException ignored) {}
+        }).start();
+    }
+
     
     /**
      * Play a note event from a recorded track
@@ -1018,31 +1095,36 @@ public class SoundManager {
 
         String type = event.instrumentType;
         int midiNote = event.midiNote;
-        int drumNote = event.drumKey;
         float volume = event.velocity;
+        int durationMs = event.durationMs;
+        int vel = 0;
+        int dur = 0;
+
+        Color color = new Color(event.colorRGB, true);
 
         switch (type) {
-            case "Piano": {
-                int vel = Math.max(1, Math.min(127, (int)(volume * 127)));
-                playNote(PIANO_CHANNEL, midiNote, vel, event.durationMs > 0 ? event.durationMs : 500);
-                break;
-            }
+            case "Piano":
+                vel = Math.max(1, Math.min(127, (int)(volume * 127)));
+                dur = (durationMs > 0) ? durationMs : 500;
 
-            case "Guitar": {
-                int packed = event.durationMs;
-                float saturation = unpackSaturation(packed);
-                int heightPx = unpackHeight(packed);
+                // event.colorRGB 필요 (없으면 record/save/load 쪽에 추가해야 함)
+                Color c = new Color(event.colorRGB, true);
 
-                playGuitarFromEvent(midiNote, volume, saturation, heightPx);
+                playLayeredNote(PIANO_CHANNEL, midiNote, vel, dur, c);
                 break;
-            }
+
+            case "Guitar":
+                // ✅ 여기서 기존 saturation 믹스를 태운다
+                int h = (event.heightPx > 0) ? event.heightPx : 200;
+                playGuitarMidiWithDuration(midiNote, color, volume, h);
+                break;
 
             case "Drum":
-            case "Snare Drum": {
-                int vel = Math.max(1, Math.min(127, (int)(volume * 100)));
-                playNote(DRUM_CHANNEL, drumNote, vel, 300);
+            case "Snare Drum":
+                // ✅ drumKey를 그대로 사용 (여러 스네어/톰 지원 가능)
+                vel = Math.max(1, (int)(volume * 127));
+                channels[DRUM_CHANNEL].noteOn(event.drumKey, vel);
                 break;
-            }
         }
     }
 

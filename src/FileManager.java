@@ -312,6 +312,8 @@ public class FileManager {
             }
             recordPanel.setBpm(data.bpm);
             recordPanel.setLoopBeats(data.loopBeats);
+
+            tm.normalizeTrackMetaAfterLoad();
         }
         
         // Load settings

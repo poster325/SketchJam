@@ -272,17 +272,20 @@ public class TrackManager {
     /**
      * Record a note event
      */
-    public void recordEvent(String instrumentType, int midiNote, int drumKey, 
-        float velocity, int durationMs) {
+    public void recordEvent(String instrumentType,
+        int midiNote, int drumKey,
+        float velocity, int durationMs,
+        int colorRGB, int heightPx) {
         if (!isRecording || currentRecordingTrack == null) return;
 
         long timestamp = System.currentTimeMillis() - recordingStartTime;
-        if (isLooping) timestamp = timestamp % loopDurationMs;
+        if (isLooping) timestamp %= loopDurationMs;
 
         Track.NoteEvent event = new Track.NoteEvent(
             timestamp, instrumentType,
             midiNote, drumKey,
-            velocity, durationMs
+            velocity, durationMs,
+            colorRGB, heightPx
         );
         currentRecordingTrack.addEvent(event);
     }
@@ -466,6 +469,18 @@ public class TrackManager {
         if (listener != null) {
             listener.onTracksUpdated();
         }
+    }
+
+    /**
+     * 로드 이후 색 재할당
+     */
+
+    public void normalizeTrackMetaAfterLoad() {
+    for (int i = 0; i < tracks.size(); i++) {
+            tracks.get(i).setName("TRACK " + (i + 1));
+            tracks.get(i).setColor(TRACK_COLORS[i % TRACK_COLORS.length]);
+        }
+        notifyTracksUpdated();
     }
 }
 

@@ -108,7 +108,7 @@ public class ProjectData implements Serializable {
         }
         
         public Track toTrack() {
-            Track track = new Track(name, Color.WHITE, 120);
+            Track track = new Track(name, Color.GRAY, 120);
             for (NoteEventData eventData : events) {
                 track.addEvent(eventData.toNoteEvent());
             }
@@ -128,18 +128,22 @@ public class ProjectData implements Serializable {
         public int drumKey;
         public float velocity;
         public int durationMs;
+        public int colorRGB;
+        public int heightPx;
 
-        public NoteEventData(Track.NoteEvent event) {
-            timestampMs = event.timestampMs;
-            instrumentType = event.instrumentType;
-            midiNote = event.midiNote;
-            drumKey = event.drumKey;
-            velocity = event.velocity;
-            durationMs = event.durationMs;
+        public NoteEventData(Track.NoteEvent e) {
+            timestampMs = e.timestampMs;
+            instrumentType = e.instrumentType;
+            midiNote = e.midiNote;
+            drumKey = e.drumKey;
+            velocity = e.velocity;
+            durationMs = e.durationMs;
+            colorRGB = e.colorRGB;
+            heightPx = e.heightPx;
         }
 
         public Track.NoteEvent toNoteEvent() {
-            return new Track.NoteEvent(timestampMs, instrumentType, midiNote, drumKey, velocity, durationMs);
+            return new Track.NoteEvent(timestampMs, instrumentType, midiNote, drumKey, velocity, durationMs, colorRGB, heightPx);
         }
     }
     

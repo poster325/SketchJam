@@ -21,15 +21,21 @@ public class Track {
         public final float velocity;
         public final int durationMs;
 
+        public final int colorRGB;     // saturation 계산용
+        public final int heightPx;     // 기타 링타임(또는 기타 톤 파라미터)용
+
         public NoteEvent(long timestampMs, String instrumentType,
-                        int midiNote, int drumKey,
-                        float velocity, int durationMs) {
+            int midiNote, int drumKey,
+            float velocity, int durationMs,
+            int colorRGB, int heightPx) {
             this.timestampMs = timestampMs;
             this.instrumentType = instrumentType;
             this.midiNote = midiNote;
             this.drumKey = drumKey;
             this.velocity = velocity;
             this.durationMs = durationMs;
+            this.colorRGB = colorRGB;
+            this.heightPx = heightPx;
         }
     }
     
@@ -69,6 +75,10 @@ public class Track {
     
     public Color getColor() {
         return color;
+    }
+
+    public void setColor(Color color) {
+        this.color = color;
     }
     
     public int getBpm() {
@@ -116,7 +126,9 @@ public class Track {
                 e.midiNote,
                 e.drumKey,
                 e.velocity,
-                newDur
+                newDur,
+                e.colorRGB,
+                e.heightPx
             ));
         }
 
