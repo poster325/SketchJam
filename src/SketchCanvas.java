@@ -2,7 +2,10 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 public class SketchCanvas extends JPanel {
     
@@ -26,6 +29,7 @@ public class SketchCanvas extends JPanel {
     private InteractionMode interactionMode = InteractionMode.OBJECT;
     private Color currentColor = Color.RED;
     private UndoRedoManager undoRedoManager;
+    private RecordPanel recordPanel;
     private List<DrawableElement> elements = new ArrayList<>();
     
     // Selection state (supports multiple selection)
@@ -44,8 +48,17 @@ public class SketchCanvas extends JPanel {
     private Point elementStartPos = null;
     private Dimension elementStartSize = null;
     
-    // Track which elements were played during drag (to avoid repeats)
-    private List<DrawableElement> playedDuringDrag = new ArrayList<>();
+    // Track the last element the mouse was over during drag (for re-entry detection)
+    private DrawableElement lastElementDuringDrag = null;
+    
+    // Track currently held piano element for sustain behavior
+    private DrawableElement heldPianoElement = null;
+    
+    // Glow effect tracking: element -> glow intensity (1.0 = full, 0.0 = none)
+    private Map<DrawableElement, Float> glowingElements = new HashMap<>();
+    private Timer glowFadeTimer;
+    private static final float GLOW_FADE_RATE = 0.05f; // How much to fade per tick
+    private static final int GLOW_FADE_INTERVAL = 30; // ms between fade ticks
     
     public SketchCanvas(UndoRedoManager undoRedoManager) {
         this.undoRedoManager = undoRedoManager;
@@ -56,6 +69,34 @@ public class SketchCanvas extends JPanel {
         
         setupMouseListeners();
         setupKeyBindings();
+        setupGlowFadeTimer();
+    }
+    
+    private void setupGlowFadeTimer() {
+        glowFadeTimer = new Timer(GLOW_FADE_INTERVAL, e -> {
+            if (glowingElements.isEmpty()) return;
+            
+            // Fade all glowing elements
+            Iterator<Map.Entry<DrawableElement, Float>> it = glowingElements.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<DrawableElement, Float> entry = it.next();
+                float newIntensity = entry.getValue() - GLOW_FADE_RATE;
+                if (newIntensity <= 0) {
+                    it.remove();
+                } else {
+                    entry.setValue(newIntensity);
+                }
+            }
+            repaint();
+        });
+        glowFadeTimer.start();
+    }
+    
+    /**
+     * Trigger glow effect on an element (called when played)
+     */
+    private void triggerGlow(DrawableElement element) {
+        glowingElements.put(element, 1.0f);
     }
     
     @Override
@@ -71,13 +112,34 @@ public class SketchCanvas extends JPanel {
                 requestFocusInWindow();
                 Point p = e.getPoint();
                 
-                // PLAY MODE: Only play sounds
+                // PLAY MODE: Different behavior for each instrument type
                 if (interactionMode == InteractionMode.PLAY) {
                     DrawableElement clicked = getElementAt(p);
                     if (clicked != null) {
-                        SoundManager.getInstance().playElement(clicked);
-                        playedDuringDrag.clear();
-                        playedDuringDrag.add(clicked);
+                        String type = clicked.getElementType();
+                        
+                        if (type.equals("Piano")) {
+                            // Piano: Start sustain note (will stop on release)
+                            String mapped = clicked.getMappedValue();
+                            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+                            SoundManager.getInstance().startPianoNote(clicked.getColor(), octave, clicked.getOpacity());
+                            heldPianoElement = clicked;
+                            triggerGlow(clicked);
+                        } else if (type.equals("Guitar")) {
+                            // Guitar: Play with duration based on height
+                            String mapped = clicked.getMappedValue();
+                            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+                            int height = clicked.getBounds().height;
+                            SoundManager.getInstance().playGuitarWithDuration(clicked.getColor(), octave, clicked.getOpacity(), height);
+                            triggerGlow(clicked);
+                            lastElementDuringDrag = clicked;
+                        } else {
+                            // Drums/Snare: Click to play
+                            SoundManager.getInstance().playElement(clicked);
+                            triggerGlow(clicked);
+                        }
+                    } else {
+                        lastElementDuringDrag = null;
                     }
                     isPlayDragging = true;
                     dragStart = p;
@@ -142,8 +204,13 @@ public class SketchCanvas extends JPanel {
             public void mouseReleased(MouseEvent e) {
                 // PLAY MODE release
                 if (interactionMode == InteractionMode.PLAY) {
+                    // Stop any held piano note
+                    if (heldPianoElement != null) {
+                        SoundManager.getInstance().stopPianoNote();
+                        heldPianoElement = null;
+                    }
                     isPlayDragging = false;
-                    playedDuringDrag.clear();
+                    lastElementDuringDrag = null;
                     dragStart = null;
                     repaint();
                     return;
@@ -201,13 +268,42 @@ public class SketchCanvas extends JPanel {
             public void mouseDragged(MouseEvent e) {
                 Point p = e.getPoint();
                 
-                // PLAY MODE: Play all elements in mouse path
+                // PLAY MODE: Different drag behavior for each instrument
                 if (interactionMode == InteractionMode.PLAY && isPlayDragging) {
                     DrawableElement elementAtPoint = getElementAt(p);
-                    if (elementAtPoint != null && !playedDuringDrag.contains(elementAtPoint)) {
-                        SoundManager.getInstance().playElement(elementAtPoint);
-                        playedDuringDrag.add(elementAtPoint);
+                    
+                    // If holding a piano and moved off it, stop the note
+                    if (heldPianoElement != null && elementAtPoint != heldPianoElement) {
+                        SoundManager.getInstance().stopPianoNote();
+                        heldPianoElement = null;
                     }
+                    
+                    // Check if entering a new element
+                    if (elementAtPoint != null && elementAtPoint != lastElementDuringDrag) {
+                        String type = elementAtPoint.getElementType();
+                        
+                        if (type.equals("Guitar")) {
+                            // Guitar: Drag-to-play with duration based on height
+                            String mapped = elementAtPoint.getMappedValue();
+                            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+                            int height = elementAtPoint.getBounds().height;
+                            SoundManager.getInstance().playGuitarWithDuration(elementAtPoint.getColor(), octave, elementAtPoint.getOpacity(), height);
+                            triggerGlow(elementAtPoint);
+                        } else if (type.equals("Piano")) {
+                            // Piano: Start sustain on entry
+                            String mapped = elementAtPoint.getMappedValue();
+                            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+                            SoundManager.getInstance().startPianoNote(elementAtPoint.getColor(), octave, elementAtPoint.getOpacity());
+                            heldPianoElement = elementAtPoint;
+                            triggerGlow(elementAtPoint);
+                        } else {
+                            // Drums/Snare: Play on entry
+                            SoundManager.getInstance().playElement(elementAtPoint);
+                            triggerGlow(elementAtPoint);
+                        }
+                    }
+                    
+                    lastElementDuringDrag = elementAtPoint;
                     paintImmediately(0, 0, getWidth(), getHeight());
                     return;
                 }
@@ -654,6 +750,10 @@ public class SketchCanvas extends JPanel {
         return currentColor;
     }
     
+    public void setRecordPanel(RecordPanel recordPanel) {
+        this.recordPanel = recordPanel;
+    }
+    
     public DrawableElement getSelectedElement() {
         return selectedElement;
     }
@@ -686,6 +786,13 @@ public class SketchCanvas extends JPanel {
         // Draw all elements
         for (DrawableElement element : elements) {
             element.draw(g2d);
+        }
+        
+        // Draw glow effects for played elements (Play mode)
+        if (!glowingElements.isEmpty()) {
+            for (Map.Entry<DrawableElement, Float> entry : glowingElements.entrySet()) {
+                drawGlowEffect(g2d, entry.getKey(), entry.getValue());
+            }
         }
         
         // Draw selection for elements (only in Object mode)
@@ -730,6 +837,61 @@ public class SketchCanvas extends JPanel {
         } else {
             g2d.drawRect(bounds.x, bounds.y, bounds.width, bounds.height);
         }
+    }
+    
+    private void drawGlowEffect(Graphics2D g2d, DrawableElement elem, float intensity) {
+        Rectangle bounds = elem.getBounds();
+        Graphics2D g2 = (Graphics2D) g2d.create();
+        
+        // Apply rotation if element is rotated
+        if (elem.getRotation() != 0) {
+            g2.rotate(Math.toRadians(elem.getRotation()), bounds.x, bounds.y);
+        }
+        
+        // Get element color for glow (white for drums, element color for others)
+        Color glowColor = elem.getColor();
+        if (glowColor.equals(Color.WHITE)) {
+            glowColor = new Color(200, 200, 255); // Slight blue tint for white elements
+        }
+        
+        // Draw multiple expanding glow layers
+        int glowLayers = 4;
+        int maxExpand = (int)(15 * intensity);
+        
+        for (int i = glowLayers; i >= 1; i--) {
+            int expand = (maxExpand * i) / glowLayers;
+            float layerAlpha = intensity * (0.3f / i);
+            
+            g2.setColor(new Color(
+                glowColor.getRed(),
+                glowColor.getGreen(),
+                glowColor.getBlue(),
+                (int)(layerAlpha * 255)
+            ));
+            
+            String type = elem.getElementType();
+            if (type.equals("Drum") || type.equals("Snare Drum")) {
+                // Draw oval glow for drums
+                g2.fillOval(
+                    bounds.x - expand,
+                    bounds.y - expand,
+                    bounds.width + expand * 2,
+                    bounds.height + expand * 2
+                );
+            } else {
+                // Draw rounded rectangle glow for others
+                g2.fillRoundRect(
+                    bounds.x - expand,
+                    bounds.y - expand,
+                    bounds.width + expand * 2,
+                    bounds.height + expand * 2,
+                    expand * 2,
+                    expand * 2
+                );
+            }
+        }
+        
+        g2.dispose();
     }
     
     private void drawMarquee(Graphics2D g2d) {
@@ -802,16 +964,41 @@ public class SketchCanvas extends JPanel {
         final int BOX_HEIGHT = 25;  // Match grid size
         final int BOX_X = 0;        // Align with grid
         int currentY = 0;           // Start at grid origin
+        int textY;
         
-        // Always show interaction mode
-        String interactionText = interactionMode == InteractionMode.PLAY ? "PLAY MODE (P)" : "OBJECT MODE (O)";
-        Color bgColor = interactionMode == InteractionMode.PLAY ? new Color(0, 128, 0, 200) : new Color(0, 0, 0, 180);
+        // Show play mode from RecordPanel (playback with metronome)
+        if (recordPanel != null && recordPanel.isPlaying()) {
+            String playText = "PLAY MODE";
+            int playWidth = fm.stringWidth(playText);
+            g2d.setColor(new Color(0, 128, 0, 200)); // Green
+            g2d.fillRect(BOX_X, currentY, playWidth + 20, BOX_HEIGHT);
+            g2d.setColor(Color.WHITE);
+            textY = currentY + (BOX_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
+            g2d.drawString(playText, BOX_X + 10, textY);
+            currentY += BOX_HEIGHT;
+        }
+        
+        // Show record mode from RecordPanel
+        if (recordPanel != null && recordPanel.isRecording()) {
+            String recText = "RECORD MODE";
+            int recWidth = fm.stringWidth(recText);
+            g2d.setColor(new Color(200, 0, 0, 200)); // Red
+            g2d.fillRect(BOX_X, currentY, recWidth + 20, BOX_HEIGHT);
+            g2d.setColor(Color.WHITE);
+            textY = currentY + (BOX_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
+            g2d.drawString(recText, BOX_X + 10, textY);
+            currentY += BOX_HEIGHT;
+        }
+        
+        // Always show interaction mode (edit vs instrument play)
+        String interactionText = interactionMode == InteractionMode.PLAY ? "INSTRUMENT MODE (P)" : "EDIT MODE (O)";
+        Color bgColor = interactionMode == InteractionMode.PLAY ? new Color(0, 100, 128, 200) : new Color(0, 0, 0, 180);
         
         int textWidth = fm.stringWidth(interactionText);
         g2d.setColor(bgColor);
         g2d.fillRect(BOX_X, currentY, textWidth + 20, BOX_HEIGHT);
         g2d.setColor(Color.WHITE);
-        int textY = currentY + (BOX_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
+        textY = currentY + (BOX_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
         g2d.drawString(interactionText, BOX_X + 10, textY);
         currentY += BOX_HEIGHT;
         

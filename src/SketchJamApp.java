@@ -14,6 +14,10 @@ public class SketchJamApp extends JFrame {
     
     private SketchCanvas canvas;
     private ColorPalette colorPalette;
+    private ScalePreset scalePreset;
+    private ScaleSelector scaleSelector;
+    private SF2Manager sf2Manager;
+    private RecordPanel recordPanel;
     private UndoRedoManager undoRedoManager;
     
     public SketchJamApp() {
@@ -39,16 +43,61 @@ public class SketchJamApp extends JFrame {
         // Connect undo manager to canvas
         undoRedoManager.setCanvas(canvas);
         
+        // Create record panel (left side, at position 0, 0)
+        // Width: 200px, Height: padding(25) + BPM(25) + icons at 75 + tracks at 150 = 400
+        recordPanel = new RecordPanel();
+        recordPanel.setBounds(0, 0, 200, 400);
+        recordPanel.setCanvas(canvas);
+        canvas.setRecordPanel(recordPanel);
+        contentPanel.add(recordPanel);
+        
         // Create color palette (positioned at 1575, 25 per design spec)
-        // Colorbox: 300×115 at position 1575, 25 (100 for colors + 15 for labels)
-        int paletteWidth = 300;
-        int paletteHeight = 115;
-        int paletteX = 1575;
-        int paletteY = 25;
+        // Colorbox: 350×150 at position 1550, 25 (25px padding around 300×100 color matrix)
+        int paletteWidth = 350;
+        int paletteHeight = 150;
+        int paletteX = 1550;  // Right edge at window edge (1550 + 350 = 1900)
+        int paletteY = 0;     // Top edge at window edge
         
         colorPalette = new ColorPalette(canvas);
         colorPalette.setBounds(paletteX, paletteY, paletteWidth, paletteHeight);
         contentPanel.add(colorPalette);
+        
+        // Create scale preset (right below color palette)
+        // 7 cells × 50px = 350px wide, 50px tall
+        int scalePresetWidth = 350;
+        int scalePresetHeight = 50;
+        int scalePresetX = paletteX;  // Same x as color palette
+        int scalePresetY = paletteY + paletteHeight;  // Right below color palette
+        
+        scalePreset = new ScalePreset(canvas);
+        scalePreset.setBounds(scalePresetX, scalePresetY, scalePresetWidth, scalePresetHeight);
+        contentPanel.add(scalePreset);
+        
+        // Create scale selector (right below scale preset)
+        // Height: 75px (25 for label + 25 for root notes + 25 for major/minor)
+        int scaleSelectorWidth = 350;
+        int scaleSelectorHeight = 75;
+        int scaleSelectorX = paletteX;
+        int scaleSelectorY = scalePresetY + scalePresetHeight;
+        
+        scaleSelector = new ScaleSelector(scalePreset);
+        scaleSelector.setBounds(scaleSelectorX, scaleSelectorY, scaleSelectorWidth, scaleSelectorHeight);
+        contentPanel.add(scaleSelector);
+        
+        // Connect color palette and scale preset for mutual selection clearing
+        colorPalette.setScalePreset(scalePreset);
+        scalePreset.setColorPalette(colorPalette);
+        
+        // Create SF2 Manager (below scale selector with 25px spacing)
+        // Height: 100px (25 for label + 25 for piano + 25 for guitar + 25 for drums)
+        int sf2ManagerWidth = 350;
+        int sf2ManagerHeight = 100;
+        int sf2ManagerX = paletteX;
+        int sf2ManagerY = scaleSelectorY + scaleSelectorHeight + 25; // 25px spacing
+        
+        sf2Manager = new SF2Manager();
+        sf2Manager.setBounds(sf2ManagerX, sf2ManagerY, sf2ManagerWidth, sf2ManagerHeight);
+        contentPanel.add(sf2Manager);
         
         // Add keyboard shortcuts for undo/redo
         setupKeyBindings();

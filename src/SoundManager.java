@@ -1,36 +1,29 @@
-import javax.sound.sampled.*;
+import javax.sound.midi.*;
 import java.awt.Color;
 import java.io.*;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Manages sound playback for SketchJam instruments.
- * Notes are determined by color, octaves by element size.
+ * Manages sound playback for SketchJam instruments using SF2 SoundFonts.
+ * Loads multiple soundfonts for different instruments.
  */
 public class SoundManager {
     
     private static SoundManager instance;
-    private Map<String, byte[]> generatedTones = new HashMap<>();
+    
+    // MIDI synthesizer for SF2 playback
+    private Synthesizer synthesizer;
+    private MidiChannel[] channels;
+    private boolean soundfontsLoaded = false;
+    
+    // Channel assignments
+    private static final int PIANO_CHANNEL = 0;
+    private static final int GUITAR_CHANNEL = 1;
+    private static final int DRUM_CHANNEL = 9;  // Standard MIDI drum channel
     
     // Note names matching ColorPalette order
     public static final String[] NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    
-    // Base frequencies for all 12 notes in octave 4
-    private static final double[] NOTE_FREQUENCIES_OCTAVE_4 = {
-        261.63,  // C4
-        277.18,  // C#4
-        293.66,  // D4
-        311.13,  // D#4
-        329.63,  // E4
-        349.23,  // F4
-        369.99,  // F#4
-        392.00,  // G4
-        415.30,  // G#4
-        440.00,  // A4
-        466.16,  // A#4
-        493.88,  // B4
-    };
     
     // Colors matching the palette (for note detection from element color)
     private static final Color[] NOTE_COLORS = {
@@ -48,22 +41,16 @@ public class SoundManager {
         Color.decode("#FF0080"), // B  - Pink-Red
     };
     
-    // Drum frequencies (lower = bigger drum)
-    private static final double[] DRUM_FREQUENCIES = {
-        200.0,  // High Tom
-        150.0,  // Mid Tom
-        100.0,  // Floor Tom
-        60.0,   // Bass Drum
-    };
-    
-    // Snare frequencies
-    private static final double[] SNARE_FREQUENCIES = {
-        300.0,  // Rim Shot
-        200.0,  // Middle Shot
-    };
+    // Drum MIDI note numbers
+    private static final int HIGH_TOM = 50;
+    private static final int MID_TOM = 47;
+    private static final int FLOOR_TOM = 43;
+    private static final int BASS_DRUM = 36;
+    private static final int SNARE_RIM = 37;
+    private static final int SNARE_CENTER = 38;
     
     private SoundManager() {
-        generateDefaultTones();
+        initializeSynthesizer();
     }
     
     public static SoundManager getInstance() {
@@ -73,45 +60,232 @@ public class SoundManager {
         return instance;
     }
     
-    private void generateDefaultTones() {
-        // Generate all 12 notes × 5 octaves for piano (shifted 1 octave up)
-        for (int octave = 1; octave <= 5; octave++) {
-            for (int note = 0; note < 12; note++) {
-                String key = "piano_" + NOTE_NAMES[note] + "_" + octave;
-                double freq = getNoteFrequency(note, octave + 1); // +1 octave shift up
-                generatedTones.put(key, generateTone(freq, 0.5, false));
+    private void initializeSynthesizer() {
+        try {
+            synthesizer = MidiSystem.getSynthesizer();
+            synthesizer.open();
+            
+            // Load all available soundfonts
+            loadAllSoundFonts();
+            
+            channels = synthesizer.getChannels();
+            
+            // Set up instrument programs based on loaded soundfonts
+            setupInstruments();
+            
+            System.out.println("MIDI Synthesizer initialized");
+            
+        } catch (MidiUnavailableException e) {
+            System.err.println("MIDI Synthesizer not available: " + e.getMessage());
+        }
+    }
+    
+    private void loadAllSoundFonts() {
+        File soundfontsDir = new File("soundfonts");
+        if (!soundfontsDir.exists() || !soundfontsDir.isDirectory()) {
+            System.out.println("No soundfonts folder found, using default sounds");
+            loadDefaultSoundbank();
+            return;
+        }
+        
+        File[] sf2Files = soundfontsDir.listFiles((dir, name) -> 
+            name.toLowerCase().endsWith(".sf2") || name.toLowerCase().endsWith(".sf3"));
+        
+        if (sf2Files == null || sf2Files.length == 0) {
+            System.out.println("No SF2 files found, using default sounds");
+            loadDefaultSoundbank();
+            return;
+        }
+        
+        List<String> loadedFonts = new ArrayList<>();
+        
+        for (File sf2File : sf2Files) {
+            try {
+                Soundbank soundbank = MidiSystem.getSoundbank(sf2File);
+                if (synthesizer.isSoundbankSupported(soundbank)) {
+                    synthesizer.loadAllInstruments(soundbank);
+                    loadedFonts.add(sf2File.getName());
+                    soundfontsLoaded = true;
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to load " + sf2File.getName() + ": " + e.getMessage());
             }
         }
         
-        // Generate all 12 notes × 5 octaves for guitar (shifted 1 octave down)
-        for (int octave = 1; octave <= 5; octave++) {
-            for (int note = 0; note < 12; note++) {
-                String key = "guitar_" + NOTE_NAMES[note] + "_" + octave;
-                double freq = getNoteFrequency(note, octave - 1); // -1 octave shift down
-                generatedTones.put(key, generateGuitarTone(freq, 0.4));
+        if (!loadedFonts.isEmpty()) {
+            System.out.println("Loaded SoundFonts: " + String.join(", ", loadedFonts));
+        }
+        
+        if (!soundfontsLoaded) {
+            loadDefaultSoundbank();
+        }
+    }
+    
+    private void loadDefaultSoundbank() {
+        Soundbank defaultSoundbank = synthesizer.getDefaultSoundbank();
+        if (defaultSoundbank != null) {
+            synthesizer.loadAllInstruments(defaultSoundbank);
+        }
+    }
+    
+    private void setupInstruments() {
+        if (channels == null || channels.length == 0) return;
+        
+        Instrument[] instruments = synthesizer.getLoadedInstruments();
+        
+        // Find best piano instrument (look for "piano" or "electric piano")
+        int pianoProgram = 0;
+        int guitarProgram = 25;
+        
+        for (Instrument inst : instruments) {
+            String name = inst.getName().toLowerCase();
+            Patch patch = inst.getPatch();
+            
+            // Look for electric piano (from Galaxy_Electric_Pianos.sf2)
+            if (name.contains("electric") && name.contains("piano")) {
+                pianoProgram = patch.getProgram();
+                System.out.println("Using piano: " + inst.getName() + " (program " + pianoProgram + ")");
+            }
+            // Look for any piano if no electric piano found yet
+            else if (name.contains("piano") && pianoProgram == 0) {
+                pianoProgram = patch.getProgram();
+            }
+            
+            // Look for clean or jazz guitar
+            if (name.contains("clean") && name.contains("guitar")) {
+                guitarProgram = patch.getProgram();
+                System.out.println("Using guitar: " + inst.getName() + " (program " + guitarProgram + ")");
+            }
+            else if (name.contains("jazz") && name.contains("guitar") && guitarProgram == 25) {
+                guitarProgram = patch.getProgram();
+            }
+            else if (name.contains("guitar") && guitarProgram == 25) {
+                guitarProgram = patch.getProgram();
             }
         }
         
-        // Generate drum tones
-        String[] drumTypes = {"high_tom", "mid_tom", "floor_tom", "bass_drum"};
-        for (int i = 0; i < drumTypes.length; i++) {
-            generatedTones.put("drum_" + drumTypes[i], generateDrumTone(DRUM_FREQUENCIES[i], 0.3));
-        }
+        // Set up channels with found programs
+        channels[PIANO_CHANNEL].programChange(pianoProgram);
+        channels[GUITAR_CHANNEL].programChange(guitarProgram);
         
-        // Generate snare tones
-        String[] snareTypes = {"rim_shot", "middle_shot"};
-        for (int i = 0; i < snareTypes.length; i++) {
-            generatedTones.put("snare_" + snareTypes[i], generateSnareTone(SNARE_FREQUENCIES[i], 0.2));
+        System.out.println("Piano channel " + PIANO_CHANNEL + " set to program " + pianoProgram);
+        System.out.println("Guitar channel " + GUITAR_CHANNEL + " set to program " + guitarProgram);
+    }
+    
+    /**
+     * Set piano soundfont by filename
+     */
+    public void setPianoSoundfont(String filename) {
+        if (channels == null) return;
+        
+        int program = loadAndFindProgram(filename, "piano");
+        if (program >= 0) {
+            channels[PIANO_CHANNEL].programChange(program);
+            System.out.println("Piano set to program " + program + " from " + (filename != null ? filename : "default"));
         }
     }
     
     /**
-     * Get frequency for a note index (0-11) at a given octave
+     * Set guitar soundfont by filename
      */
-    private double getNoteFrequency(int noteIndex, int octave) {
-        double baseFreq = NOTE_FREQUENCIES_OCTAVE_4[noteIndex];
-        int octaveDiff = octave - 4;
-        return baseFreq * Math.pow(2, octaveDiff);
+    public void setGuitarSoundfont(String filename) {
+        if (channels == null) return;
+        
+        int program = loadAndFindProgram(filename, "guitar");
+        if (program >= 0) {
+            channels[GUITAR_CHANNEL].programChange(program);
+            System.out.println("Guitar set to program " + program + " from " + (filename != null ? filename : "default"));
+        }
+    }
+    
+    /**
+     * Set drums soundfont by filename
+     */
+    public void setDrumsSoundfont(String filename) {
+        if (filename != null) {
+            try {
+                File sf2File = new File("soundfonts/" + filename);
+                if (sf2File.exists()) {
+                    Soundbank soundbank = MidiSystem.getSoundbank(sf2File);
+                    if (synthesizer.isSoundbankSupported(soundbank)) {
+                        synthesizer.loadAllInstruments(soundbank);
+                        System.out.println("Drums updated from " + filename);
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to load drum soundfont: " + e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Load a soundfont and find a suitable program number
+     */
+    private int loadAndFindProgram(String filename, String instrumentType) {
+        if (filename == null) {
+            // Return default program
+            return instrumentType.equals("piano") ? 0 : 25;
+        }
+        
+        try {
+            File sf2File = new File("soundfonts/" + filename);
+            if (!sf2File.exists()) {
+                System.err.println("SF2 file not found: " + filename);
+                return -1;
+            }
+            
+            Soundbank soundbank = MidiSystem.getSoundbank(sf2File);
+            
+            // Load all instruments from this soundfont
+            if (synthesizer.isSoundbankSupported(soundbank)) {
+                synthesizer.loadAllInstruments(soundbank);
+                System.out.println("Loaded soundfont: " + filename);
+            } else {
+                System.err.println("Soundfont not supported: " + filename);
+                return -1;
+            }
+            
+            Instrument[] instruments = soundbank.getInstruments();
+            
+            // Find first instrument (most SF2s have their main sound at program 0)
+            if (instruments.length > 0) {
+                Patch patch = instruments[0].getPatch();
+                System.out.println("Found instrument: " + instruments[0].getName() + " at program " + patch.getProgram());
+                return patch.getProgram();
+            }
+            
+            // Fallback: search by name
+            for (Instrument inst : instruments) {
+                String name = inst.getName().toLowerCase();
+                Patch patch = inst.getPatch();
+                
+                // Return first matching instrument
+                if (instrumentType.equals("piano") && 
+                    (name.contains("piano") || name.contains("key") || name.contains("ep"))) {
+                    return patch.getProgram();
+                }
+                if (instrumentType.equals("guitar") && name.contains("guitar")) {
+                    return patch.getProgram();
+                }
+            }
+            
+            // If no match found, return first instrument
+            if (instruments.length > 0) {
+                return instruments[0].getPatch().getProgram();
+            }
+        } catch (Exception e) {
+            System.err.println("Error finding program: " + e.getMessage());
+        }
+        
+        return -1;
+    }
+    
+    /**
+     * Convert note index (0-11) and octave to MIDI note number
+     * MIDI note 60 = C4 (middle C)
+     */
+    private int toMidiNote(int noteIndex, int octave) {
+        return 12 * (octave + 1) + noteIndex;
     }
     
     /**
@@ -123,7 +297,6 @@ public class SoundManager {
         
         for (int i = 0; i < NOTE_COLORS.length; i++) {
             Color noteColor = NOTE_COLORS[i];
-            // Calculate color distance (simple RGB distance)
             int dr = color.getRed() - noteColor.getRed();
             int dg = color.getGreen() - noteColor.getGreen();
             int db = color.getBlue() - noteColor.getBlue();
@@ -146,213 +319,228 @@ public class SoundManager {
     }
     
     /**
-     * Generate a sine wave tone with harmonics
+     * Play a note on the specified channel
      */
-    private byte[] generateTone(double frequency, double duration, boolean harmonics) {
-        int sampleRate = 44100;
-        int numSamples = (int)(duration * sampleRate);
-        byte[] buffer = new byte[numSamples * 2];
+    private void playNote(int channel, int midiNote, int velocity, int durationMs) {
+        if (channels == null || channel >= channels.length) return;
         
-        for (int i = 0; i < numSamples; i++) {
-            double time = i / (double) sampleRate;
-            double envelope = Math.exp(-3.0 * time / duration);
-            
-            double sample = Math.sin(2 * Math.PI * frequency * time);
-            
-            if (harmonics) {
-                sample += 0.5 * Math.sin(4 * Math.PI * frequency * time);
-                sample += 0.25 * Math.sin(6 * Math.PI * frequency * time);
-                sample /= 1.75;
+        final MidiChannel ch = channels[channel];
+        final int note = Math.max(0, Math.min(127, midiNote)); // Clamp to valid MIDI range
+        final int vel = Math.max(1, Math.min(127, velocity));
+        
+        // Play note in a separate thread to not block
+        new Thread(() -> {
+            try {
+                ch.noteOn(note, vel);
+                Thread.sleep(durationMs);
+                ch.noteOff(note);
+            } catch (InterruptedException e) {
+                ch.noteOff(note);
             }
-            
-            sample *= envelope;
-            
-            short value = (short)(sample * 32767 * 0.8);
-            buffer[i * 2] = (byte)(value & 0xFF);
-            buffer[i * 2 + 1] = (byte)((value >> 8) & 0xFF);
-        }
-        
-        return buffer;
-    }
-    
-    /**
-     * Generate a guitar-like plucked string tone
-     */
-    private byte[] generateGuitarTone(double frequency, double duration) {
-        int sampleRate = 44100;
-        int numSamples = (int)(duration * sampleRate);
-        byte[] buffer = new byte[numSamples * 2];
-        
-        for (int i = 0; i < numSamples; i++) {
-            double time = i / (double) sampleRate;
-            double envelope = Math.exp(-4.0 * time / duration);
-            
-            // Guitar has strong harmonics
-            double sample = Math.sin(2 * Math.PI * frequency * time);
-            sample += 0.6 * Math.sin(4 * Math.PI * frequency * time);
-            sample += 0.3 * Math.sin(6 * Math.PI * frequency * time);
-            sample += 0.15 * Math.sin(8 * Math.PI * frequency * time);
-            sample /= 2.05;
-            
-            sample *= envelope;
-            
-            short value = (short)(sample * 32767 * 0.8);
-            buffer[i * 2] = (byte)(value & 0xFF);
-            buffer[i * 2 + 1] = (byte)((value >> 8) & 0xFF);
-        }
-        
-        return buffer;
-    }
-    
-    /**
-     * Generate a drum-like tone
-     */
-    private byte[] generateDrumTone(double frequency, double duration) {
-        int sampleRate = 44100;
-        int numSamples = (int)(duration * sampleRate);
-        byte[] buffer = new byte[numSamples * 2];
-        
-        for (int i = 0; i < numSamples; i++) {
-            double time = i / (double) sampleRate;
-            double envelope = Math.exp(-8.0 * time / duration);
-            
-            double currentFreq = frequency * (1.0 + 2.0 * Math.exp(-20 * time));
-            double sample = Math.sin(2 * Math.PI * currentFreq * time);
-            sample += 0.1 * (Math.random() * 2 - 1) * envelope;
-            sample *= envelope;
-            
-            short value = (short)(sample * 32767 * 0.9);
-            buffer[i * 2] = (byte)(value & 0xFF);
-            buffer[i * 2 + 1] = (byte)((value >> 8) & 0xFF);
-        }
-        
-        return buffer;
-    }
-    
-    /**
-     * Generate a snare-like tone with noise
-     */
-    private byte[] generateSnareTone(double frequency, double duration) {
-        int sampleRate = 44100;
-        int numSamples = (int)(duration * sampleRate);
-        byte[] buffer = new byte[numSamples * 2];
-        
-        for (int i = 0; i < numSamples; i++) {
-            double time = i / (double) sampleRate;
-            double envelope = Math.exp(-10.0 * time / duration);
-            
-            double sample = 0.5 * Math.sin(2 * Math.PI * frequency * time);
-            sample += 0.5 * (Math.random() * 2 - 1);
-            sample *= envelope;
-            
-            short value = (short)(sample * 32767 * 0.8);
-            buffer[i * 2] = (byte)(value & 0xFF);
-            buffer[i * 2 + 1] = (byte)((value >> 8) & 0xFF);
-        }
-        
-        return buffer;
-    }
-    
-    /**
-     * Play a sound by key
-     */
-    public void play(String key) {
-        play(key, 1.0f);
-    }
-    
-    /**
-     * Play a sound by key with volume
-     */
-    public void play(String key, float volume) {
-        if (generatedTones.containsKey(key)) {
-            playGeneratedTone(generatedTones.get(key), volume);
-        }
-    }
-    
-    private void playGeneratedTone(byte[] data) {
-        playGeneratedTone(data, 1.0f);
-    }
-    
-    private void playGeneratedTone(byte[] data, float volume) {
-        try {
-            AudioFormat format = new AudioFormat(44100, 16, 1, true, false);
-            DataLine.Info info = new DataLine.Info(Clip.class, format);
-            Clip clip = (Clip) AudioSystem.getLine(info);
-            clip.open(format, data, 0, data.length);
-            
-            // Apply volume control
-            if (clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
-                FloatControl gainControl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
-                // Convert volume (0-1) to decibels
-                float dB = (float) (Math.log(Math.max(0.01, volume)) / Math.log(10.0) * 20.0);
-                dB = Math.max(gainControl.getMinimum(), Math.min(gainControl.getMaximum(), dB));
-                gainControl.setValue(dB);
-            }
-            
-            clip.start();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    
-    /**
-     * Play piano note based on color, octave, and volume
-     */
-    public void playPiano(Color color, int octave, float volume) {
-        String noteName = getNoteNameFromColor(color);
-        String key = "piano_" + noteName + "_" + octave;
-        play(key, volume);
+        }).start();
     }
     
     /**
      * Play piano note by note index (0-11 for C through B), octave, and volume
      */
     public void playPianoByIndex(int noteIndex, int octave, float volume) {
-        if (noteIndex >= 0 && noteIndex < NOTE_NAMES.length) {
-            String key = "piano_" + NOTE_NAMES[noteIndex] + "_" + octave;
-            play(key, volume);
+        int midiNote = toMidiNote(noteIndex, octave);
+        int velocity = (int)(volume * 100);
+        playNote(PIANO_CHANNEL, midiNote, velocity, 500);
+    }
+    
+    /**
+     * Play piano note based on color, octave, and volume
+     */
+    public void playPiano(Color color, int octave, float volume) {
+        int noteIndex = getNoteIndexFromColor(color);
+        playPianoByIndex(noteIndex, octave, volume);
+    }
+    
+    // Track currently held piano note for sustain
+    private int currentPianoNote = -1;
+    
+    /**
+     * Start playing a piano note (for press-and-hold behavior)
+     * Call stopPianoNote() to release
+     */
+    public void startPianoNote(Color color, int octave, float volume) {
+        if (channels == null) return;
+        
+        // Stop any currently playing note first
+        if (currentPianoNote >= 0) {
+            channels[PIANO_CHANNEL].noteOff(currentPianoNote);
         }
+        
+        int noteIndex = getNoteIndexFromColor(color);
+        currentPianoNote = toMidiNote(noteIndex, octave);
+        int velocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        
+        MidiChannel ch = channels[PIANO_CHANNEL];
+        ch.noteOn(currentPianoNote, velocity);
+        System.out.println("Piano note ON: " + currentPianoNote + " velocity: " + velocity);
+    }
+    
+    /**
+     * Stop the currently playing piano note
+     */
+    public void stopPianoNote() {
+        if (channels == null || currentPianoNote < 0) return;
+        
+        MidiChannel ch = channels[PIANO_CHANNEL];
+        ch.noteOff(currentPianoNote);
+        System.out.println("Piano note OFF: " + currentPianoNote);
+        currentPianoNote = -1;
+    }
+    
+    /**
+     * Play guitar note by note index
+     */
+    public void playGuitarByIndex(int noteIndex, int octave, float volume) {
+        int midiNote = toMidiNote(noteIndex, octave);
+        int velocity = (int)(volume * 100);
+        playNote(GUITAR_CHANNEL, midiNote, velocity, 400);
+    }
+    
+    // Track guitar note versions and last play time
+    private java.util.Map<Integer, Long> guitarNoteVersions = new java.util.HashMap<>();
+    private java.util.Map<Integer, Long> guitarLastPlayTime = new java.util.HashMap<>();
+    private long guitarNoteCounter = 0;
+    private static final long MIN_RETRIGGER_INTERVAL = 30; // Minimum ms between re-triggers of same note
+    
+    /**
+     * Play guitar note with duration based on element height
+     * Short elements = quick damping (like palm muting)
+     * Tall elements = let it ring naturally
+     * Height 100px = 50ms (damped), Height 500px = 2000ms (ring out)
+     */
+    public synchronized void playGuitarWithDuration(Color color, int octave, float volume, int heightPx) {
+        if (channels == null) return;
+        
+        int noteIndex = getNoteIndexFromColor(color);
+        final int midiNote = toMidiNote(noteIndex, octave);
+        final int velocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+        final MidiChannel ch = channels[GUITAR_CHANNEL];
+        
+        // Check if we're re-triggering too fast
+        long now = System.currentTimeMillis();
+        Long lastPlay = guitarLastPlayTime.get(midiNote);
+        if (lastPlay != null && (now - lastPlay) < MIN_RETRIGGER_INTERVAL) {
+            return; // Skip this trigger, too fast
+        }
+        guitarLastPlayTime.put(midiNote, now);
+        
+        // Map height to ring time before damping
+        // Height 100 = 50ms (very short, muted), Height 500 = 2000ms (full ring)
+        final int ringTime = (int)(50 * Math.pow(40, (heightPx - 100) / 400.0)); // 50ms to 2000ms
+        
+        // Increment version for this note - previous noteOffs will be ignored
+        final long thisVersion = ++guitarNoteCounter;
+        guitarNoteVersions.put(midiNote, thisVersion);
+        
+        // Send noteOff first to reset the note (allows clean re-trigger)
+        ch.noteOff(midiNote);
+        
+        // Small delay to ensure noteOff is processed
+        try { Thread.sleep(5); } catch (InterruptedException e) {}
+        
+        // Start the note
+        ch.noteOn(midiNote, velocity);
+        
+        // Schedule noteOff in background
+        new Thread(() -> {
+            try {
+                Thread.sleep(ringTime);
+                // Only send noteOff if this is still the latest trigger for this note
+                Long currentVersion = guitarNoteVersions.get(midiNote);
+                if (currentVersion != null && currentVersion == thisVersion) {
+                    ch.noteOff(midiNote);
+                }
+            } catch (InterruptedException e) {
+                // Interrupted - don't send noteOff
+            }
+        }).start();
     }
     
     /**
      * Play guitar note based on color, octave, and volume
      */
     public void playGuitar(Color color, int octave, float volume) {
-        String noteName = getNoteNameFromColor(color);
-        String key = "guitar_" + noteName + "_" + octave;
-        play(key, volume);
+        int noteIndex = getNoteIndexFromColor(color);
+        playGuitarByIndex(noteIndex, octave, volume);
     }
     
     /**
      * Play drum sound with volume
      */
     public void playDrum(String type, float volume) {
-        String key = "drum_" + type.toLowerCase().replace(" ", "_");
-        play(key, volume);
+        if (channels == null || DRUM_CHANNEL >= channels.length) return;
+        
+        int drumNote;
+        switch (type.toLowerCase()) {
+            case "high tom":
+            case "high_tom":
+                drumNote = HIGH_TOM;
+                break;
+            case "mid tom":
+            case "mid_tom":
+                drumNote = MID_TOM;
+                break;
+            case "floor tom":
+            case "floor_tom":
+                drumNote = FLOOR_TOM;
+                break;
+            case "bass drum":
+            case "bass_drum":
+            default:
+                drumNote = BASS_DRUM;
+                break;
+        }
+        
+        int velocity = (int)(volume * 100);
+        playNote(DRUM_CHANNEL, drumNote, velocity, 300);
     }
     
     /**
      * Play snare sound with volume
      */
     public void playSnare(String type, float volume) {
-        String key = "snare_" + type.toLowerCase().replace(" ", "_");
-        play(key, volume);
+        if (channels == null || DRUM_CHANNEL >= channels.length) return;
+        
+        int snareNote;
+        switch (type.toLowerCase()) {
+            case "rim shot":
+            case "rim_shot":
+                snareNote = SNARE_RIM;
+                break;
+            case "middle shot":
+            case "middle_shot":
+            default:
+                snareNote = SNARE_CENTER;
+                break;
+        }
+        
+        int velocity = (int)(volume * 100);
+        playNote(DRUM_CHANNEL, snareNote, velocity, 200);
     }
     
     /**
-     * Play sound for a drawable element based on its color, properties, and opacity (volume)
+     * Play an element based on its type and properties
      */
     public void playElement(DrawableElement element) {
         String type = element.getElementType();
         String mapped = element.getMappedValue();
         Color color = element.getColor();
-        float volume = element.getOpacity(); // Opacity maps to volume
+        float volume = element.getOpacity();
         
         switch (type) {
             case "Piano":
-                // Extract octave number from "Octave X"
                 int pianoOctave = Integer.parseInt(mapped.split(" ")[1]);
-                playPiano(color, pianoOctave, volume);
+                playPiano(color, pianoOctave + 1, volume);
+                break;
+            case "Guitar":
+                int guitarOctave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+                playGuitar(color, guitarOctave, volume);
                 break;
             case "Drum":
                 playDrum(mapped, volume);
@@ -360,11 +548,56 @@ public class SoundManager {
             case "Snare Drum":
                 playSnare(mapped, volume);
                 break;
-            case "Guitar":
-                // Extract octave from "Octave X, Duration Y"
-                int guitarOctave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
-                playGuitar(color, guitarOctave, volume);
-                break;
+        }
+    }
+    
+    /**
+     * Play a metronome beep sound
+     * Generates a short sine wave beep
+     */
+    public void playMetronomeClick() {
+        new Thread(() -> {
+            try {
+                // Generate a short beep using AudioSystem
+                float sampleRate = 44100;
+                int durationMs = 50;
+                int numSamples = (int)(sampleRate * durationMs / 1000);
+                byte[] buffer = new byte[numSamples * 2];
+                
+                double frequency = 880.0; // A5 - typical metronome beep frequency
+                
+                for (int i = 0; i < numSamples; i++) {
+                    double angle = 2.0 * Math.PI * i * frequency / sampleRate;
+                    // Apply envelope for click sound
+                    double envelope = 1.0 - ((double)i / numSamples);
+                    short sample = (short)(Math.sin(angle) * 32767 * 0.5 * envelope);
+                    buffer[i * 2] = (byte)(sample & 0xFF);
+                    buffer[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+                }
+                
+                javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
+                    sampleRate, 16, 1, true, false);
+                javax.sound.sampled.DataLine.Info info = new javax.sound.sampled.DataLine.Info(
+                    javax.sound.sampled.SourceDataLine.class, format);
+                javax.sound.sampled.SourceDataLine line = 
+                    (javax.sound.sampled.SourceDataLine) javax.sound.sampled.AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+                line.write(buffer, 0, buffer.length);
+                line.drain();
+                line.close();
+            } catch (Exception e) {
+                System.err.println("Metronome beep error: " + e.getMessage());
+            }
+        }).start();
+    }
+    
+    /**
+     * Clean up resources
+     */
+    public void close() {
+        if (synthesizer != null && synthesizer.isOpen()) {
+            synthesizer.close();
         }
     }
 }

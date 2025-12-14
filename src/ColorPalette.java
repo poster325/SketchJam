@@ -10,10 +10,9 @@ import java.awt.event.*;
 public class ColorPalette extends JPanel {
     
     private static final int CELL_SIZE = 25;
-    private static final int PADDING = 0;  // No padding, cells fill the entire 300×100
+    private static final int PADDING = 25;  // 25px padding around the color matrix
     private static final int COLS = 12;
     private static final int ROWS = 4;
-    private static final int LABEL_HEIGHT = 15; // Height for note labels
     
     // Saturation levels: 100%, 80%, 60%, 40%
     private static final float[] SATURATION_LEVELS = {1.0f, 0.8f, 0.6f, 0.4f};
@@ -40,12 +39,13 @@ public class ColorPalette extends JPanel {
     
     private Color[][] colorMatrix;
     private SketchCanvas canvas;
-    private int selectedRow = 0;
-    private int selectedCol = 0; // Default to C (red)
+    private ScalePreset scalePreset; // Reference to clear selection when palette is clicked
+    private int selectedRow = -1;
+    private int selectedCol = -1;
     
     public ColorPalette(SketchCanvas canvas) {
         this.canvas = canvas;
-        setPreferredSize(new Dimension(300, 100 + LABEL_HEIGHT)); // Extra height for labels
+        setPreferredSize(new Dimension(PADDING * 2 + COLS * CELL_SIZE, PADDING * 2 + ROWS * CELL_SIZE)); // 350×150 with 25px padding
         setBackground(new Color(0x38, 0x38, 0x38)); // Match window background
         
         // Build color matrix with saturation variations
@@ -63,6 +63,11 @@ public class ColorPalette extends JPanel {
                     Color selected = colorMatrix[row][col];
                     canvas.setCurrentColor(selected);
                     
+                    // Clear selection in scale preset
+                    if (scalePreset != null) {
+                        scalePreset.clearSelection();
+                    }
+                    
                     // Play the note for audio feedback (octave 3 for preview)
                     // Use column index directly to ensure correct note mapping
                     SoundManager.getInstance().playPianoByIndex(col, 3, 1.0f);
@@ -74,6 +79,22 @@ public class ColorPalette extends JPanel {
         
         // Set initial color to C (red)
         canvas.setCurrentColor(colorMatrix[0][0]);
+    }
+    
+    /**
+     * Set reference to scale preset for mutual selection clearing
+     */
+    public void setScalePreset(ScalePreset preset) {
+        this.scalePreset = preset;
+    }
+    
+    /**
+     * Clear selection (called when scale preset is clicked)
+     */
+    public void clearSelection() {
+        selectedCol = -1;
+        selectedRow = -1;
+        repaint();
     }
     
     /**
@@ -163,18 +184,19 @@ public class ColorPalette extends JPanel {
             }
         }
         
-        // Draw note labels below the palette
-        g2d.setFont(FontManager.getRegular(10));
-        g2d.setColor(Color.WHITE);
+        // Draw note labels centered on the top row cells
+        g2d.setFont(FontManager.getBold(9));
+        g2d.setColor(Color.BLACK);
         FontMetrics fm = g2d.getFontMetrics();
         
         for (int col = 0; col < COLS; col++) {
             String noteName = NOTE_NAMES[col];
             int textWidth = fm.stringWidth(noteName);
             int x = PADDING + col * CELL_SIZE + (CELL_SIZE - textWidth) / 2;
-            int y = PADDING + ROWS * CELL_SIZE + LABEL_HEIGHT - 3;
+            int y = PADDING + (CELL_SIZE + fm.getAscent() - fm.getDescent()) / 2;
             g2d.drawString(noteName, x, y);
         }
+        
     }
 }
 
