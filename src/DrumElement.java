@@ -1,5 +1,4 @@
 import java.awt.*;
-import java.awt.AlphaComposite;
 
 /**
  * Drum element - Filled circle with 1:1 ratio
@@ -11,18 +10,18 @@ public class DrumElement extends AbstractElement {
     public static final String[] DRUM_TYPES = {"High Tom", "Mid Tom", "Floor Tom", "Bass Drum"};
     
     public DrumElement(int x, int y, int size, Color color) {
-        super(x, y, snapSize(size), snapSize(size), Color.WHITE); // Always white
+        super(x, y, snapSize(size), snapSize(size), color); 
     }
     
     private DrumElement(int x, int y, int size, Color color, int rotation, float opacity) {
-        super(x, y, size, size, Color.WHITE); // Always white
+        super(x, y, size, size, color);
         this.rotation = rotation;
         this.opacity = opacity;
     }
     
     @Override
     public void setColor(Color color) {
-        // Drums are always black, ignore color changes
+       this.color = color;
     }
     
     public static int snapSize(int size) {

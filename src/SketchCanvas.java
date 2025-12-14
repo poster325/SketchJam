@@ -522,10 +522,10 @@ public class SketchCanvas extends JPanel {
         switch (currentDrawMode) {
             case DRUM:
                 int drumSize = Math.max(width, height);
-                return new DrumElement(x, y, drumSize, currentColor);
+                return new DrumElement(x, y, drumSize, drumColor);
             case SNARE_DRUM:
                 int snareSize = Math.max(width, height);
-                return new SnareDrumElement(x, y, snareSize, currentColor);
+                return new SnareDrumElement(x, y, snareSize, drumColor);
             case PIANO:
                 return new PianoElement(x, y, height, currentColor);
             case GUITAR:

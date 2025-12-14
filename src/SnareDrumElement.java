@@ -1,5 +1,4 @@
 import java.awt.*;
-import java.awt.AlphaComposite;
 import java.awt.geom.Area;
 import java.awt.geom.Ellipse2D;
 
@@ -13,18 +12,18 @@ public class SnareDrumElement extends AbstractElement {
     public static final String[] SNARE_TYPES = {"Rim Shot", "Middle Shot"};
     
     public SnareDrumElement(int x, int y, int size, Color color) {
-        super(x, y, snapSize(size), snapSize(size), Color.WHITE); // Always white
+        super(x, y, snapSize(size), snapSize(size), color); // Always white
     }
     
     private SnareDrumElement(int x, int y, int size, Color color, int rotation, float opacity) {
-        super(x, y, size, size, Color.WHITE); // Always white
+        super(x, y, size, size, color); // Always white
         this.rotation = rotation;
         this.opacity = opacity;
     }
     
     @Override
     public void setColor(Color color) {
-        // Snare drums are always black, ignore color changes
+        this.color = color;
     }
     
     public static int snapSize(int size) {
