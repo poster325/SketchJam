@@ -99,21 +99,8 @@ public class MidiNote {
         return getDefaultTrackColor(trackIndex);
     }
     
-    private static final Color[] TRACK_COLORS = {
-        new Color(0x00, 0xBF, 0xFF), // Track 1 - Cyan/Blue
-        new Color(0xFF, 0x00, 0x00), // Track 2 - Red
-        new Color(0xFF, 0x8C, 0x00), // Track 3 - Orange
-        new Color(0xFF, 0xD7, 0x00), // Track 4 - Gold/Yellow
-        new Color(0x32, 0xCD, 0x32), // Track 5 - Lime Green
-        new Color(0x00, 0xCE, 0xD1), // Track 6 - Dark Turquoise
-        new Color(0x94, 0x00, 0xD3), // Track 7 - Dark Violet
-    };
-    
     private static Color getDefaultTrackColor(int trackIndex) {
-        if (trackIndex >= 0 && trackIndex < TRACK_COLORS.length) {
-            return TRACK_COLORS[trackIndex];
-        }
-        return TRACK_COLORS[0];
+        return Colors.getTrackColor(trackIndex);
     }
     
     // Move note by delta beats

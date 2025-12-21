@@ -13,15 +13,6 @@ public class MidiSequence {
     
     // Track metadata
     private int trackCount;
-    private static final Color[] TRACK_COLORS = {
-        new Color(0x00, 0xBF, 0xFF), // Track 1 - Cyan/Blue
-        Color.RED,                    // Track 2 - Red
-        new Color(0xFF, 0x8C, 0x00), // Track 3 - Orange
-        new Color(0xFF, 0xD7, 0x00), // Track 4 - Gold/Yellow
-        new Color(0x32, 0xCD, 0x32), // Track 5 - Lime Green
-        new Color(0x00, 0xCE, 0xD1), // Track 6 - Dark Turquoise
-        new Color(0x94, 0x00, 0xD3), // Track 7 - Dark Violet
-    };
     
     // Listeners
     private List<SequenceListener> listeners;
@@ -334,7 +325,7 @@ public class MidiSequence {
     // Convert to Track format (for compatibility)
     public List<Track> exportToTracks() {
         // Group notes by track (we can use color or just make one track)
-        Track track = new Track("TRACK 1", TRACK_COLORS[0], bpm);
+        Track track = new Track("TRACK 1", Colors.getTrackColor(0), bpm);
         
         for (MidiNote note : getNotesSorted()) {
             Track.NoteEvent event = new Track.NoteEvent(

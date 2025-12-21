@@ -167,23 +167,31 @@ public class SketchJamApp extends JFrame {
     }
     
     private void setupKeyBindings() {
-        // Undo: Ctrl+Z
+        // Undo: Ctrl+Z (skip if MIDI panel is focused - it has its own undo)
         getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
             .put(KeyStroke.getKeyStroke("control Z"), "undo");
         getRootPane().getActionMap().put("undo", new AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
+                // Skip if MIDI panel is focused (it handles its own undo)
+                if (midiPanel.isFocusOwner()) {
+                    return;
+                }
                 undoRedoManager.undo();
                 canvas.repaint();
             }
         });
         
-        // Redo: Ctrl+Y
+        // Redo: Ctrl+Y (skip if MIDI panel is focused - it has its own redo)
         getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
             .put(KeyStroke.getKeyStroke("control Y"), "redo");
         getRootPane().getActionMap().put("redo", new AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
+                // Skip if MIDI panel is focused (it handles its own redo)
+                if (midiPanel.isFocusOwner()) {
+                    return;
+                }
                 undoRedoManager.redo();
                 canvas.repaint();
             }

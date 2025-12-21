@@ -429,7 +429,7 @@ public class FileManager {
         int startSample = (int)(sampleRate * event.timestampMs / 1000.0);
         int durationSamples = (int)(sampleRate * Math.max(100, event.durationMs) / 1000.0);
 
-        // ✅ event에서 바로 MIDI를 가져옴 (octave/noteIndex 계산 삭제)
+        // Get MIDI note directly from event (no octave/noteIndex calculation needed)
         int midiNote = event.midiNote;
 
         double frequency = 440.0 * Math.pow(2.0, (midiNote - 69) / 12.0);

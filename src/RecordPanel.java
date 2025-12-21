@@ -104,9 +104,9 @@ public class RecordPanel extends JPanel {
 
             @Override
             public void onRecordingAutoStopped(String reason) {
-                // 메트로놈 끄기 + UI/모드 정리
+                // Stop metronome and cleanup UI/mode
                 stopMetronome();
-                isCountingIn = false; // 혹시 남아있으면 정리
+                isCountingIn = false; // Clean up if still set
 
                 if (canvas != null) {
                     canvas.setInteractionMode(SketchCanvas.InteractionMode.OBJECT);
@@ -519,24 +519,41 @@ public class RecordPanel extends JPanel {
     
     /**
      * Get per-note SF2 latency compensation in beats.
-     * Returns 125ms worth of beats for Piano/Guitar notes when distortion SF2s
-     * (8bitsf.SF2, Distortion_Guitar.sf2 from distortion/ folder) are loaded.
-     * These SF2 files have internal latency that needs compensation.
+     * Returns 125ms worth of beats ONLY for Piano/Guitar notes when:
+     * 1. Distortion SF2s (8bitsf.SF2, Distortion_Guitar.sf2) are loaded, AND
+     * 2. The note's CURRENT color has high saturation (>=0.55) - meaning distortion sound is used
      */
     private double getNoteCompensationBeats(MidiNote note) {
         String type = note.getInstrumentType();
         SoundManager sm = SoundManager.getInstance();
         
-        // Distortion SF2s from distortion/ folder have internal latency
-        // Compensation needed for Piano and Guitar when those SF2s are loaded
+        // Only Piano and Guitar can use distortion
         if ("Piano".equals(type) || "Guitar".equals(type)) {
+            // Check if distortion SF2s are loaded
             if (sm.isDistortionLoaded()) {
-                // 125ms early trigger
-                return 125.0 * bpm / 60000.0;
+                // Get CURRENT element color (dynamic lookup, same as playMidiNote)
+                Color noteColor = new Color(note.getColorRGB());
+                if (note.getElementId() != null && canvas != null) {
+                    DrawableElement element = canvas.getElementById(note.getElementId());
+                    if (element != null) {
+                        noteColor = element.getColor();
+                    }
+                }
+                
+                // Check saturation - only compensate if distortion is actually used
+                // Saturation >= 0.55 means distortion sound plays (see getMixRatios)
+                float saturation = SoundManager.getSaturationFromColor(noteColor);
+                if (saturation >= 0.55f) {
+                    // 125ms early trigger
+                    return 125.0 * bpm / 60000.0;
+                }
             }
         }
         
-        // No compensation for drums or when distortion SF2s not loaded
+        // No compensation for:
+        // - Drums
+        // - Clean sounds (low saturation colors)
+        // - When distortion SF2s not loaded
         return 0.0;
     }
     
@@ -547,16 +564,7 @@ public class RecordPanel extends JPanel {
     private long recordingStartTime;
     private int currentMidiTrackIndex = 0;
     
-    // Track colors (same as TrackManager)
-    private static final java.awt.Color[] TRACK_COLORS = {
-        new java.awt.Color(0x00, 0xBF, 0xFF), // Track 1 - Cyan/Blue
-        new java.awt.Color(0xFF, 0x00, 0x00), // Track 2 - Red
-        new java.awt.Color(0xFF, 0x8C, 0x00), // Track 3 - Orange
-        new java.awt.Color(0xFF, 0xD7, 0x00), // Track 4 - Gold/Yellow
-        new java.awt.Color(0x32, 0xCD, 0x32), // Track 5 - Lime Green
-        new java.awt.Color(0x00, 0xCE, 0xD1), // Track 6 - Dark Turquoise
-        new java.awt.Color(0x94, 0x00, 0xD3), // Track 7 - Dark Violet
-    };
+    // Track colors - now use centralized Colors class
     
     private void startRecording() {
         // Start 4-beat count-in before actual recording
@@ -706,8 +714,7 @@ public class RecordPanel extends JPanel {
         
         // Set track color
         note.setTrackIndex(currentMidiTrackIndex);
-        int trackColorIdx = currentMidiTrackIndex % TRACK_COLORS.length;
-        note.setTrackColorRGB(TRACK_COLORS[trackColorIdx].getRGB());
+        note.setTrackColorRGB(Colors.getTrackColor(currentMidiTrackIndex).getRGB());
         
         midiSequencer.getSequence().addNote(note);
     }
@@ -721,7 +728,7 @@ public class RecordPanel extends JPanel {
 
         int intervalMs = 60000 / bpm;
 
-        metronomeBeatIndex = 0; // 메트로놈 시작 시 초기화
+        metronomeBeatIndex = 0; // Initialize when starting metronome
         metronomeStartTime = System.currentTimeMillis();
 
         metronomeTimer = new Timer(intervalMs, e -> {
@@ -835,8 +842,7 @@ public class RecordPanel extends JPanel {
                 if (note.getTrackIndex() > trackIndex) {
                     note.setTrackIndex(note.getTrackIndex() - 1);
                     // Update track color
-                    int newIdx = note.getTrackIndex() % TRACK_COLORS.length;
-                    note.setTrackColorRGB(TRACK_COLORS[newIdx].getRGB());
+                    note.setTrackColorRGB(Colors.getTrackColor(note.getTrackIndex()).getRGB());
                 }
             }
             
@@ -930,7 +936,7 @@ public class RecordPanel extends JPanel {
         // Draw each track layer
         for (int i = 0; i <= maxTrack && i < NUM_TRACKS; i++) {
             int y = TRACKS_Y + i * TRACK_HEIGHT;
-            Color trackColor = TRACK_COLORS[i % TRACK_COLORS.length];
+            Color trackColor = Colors.getTrackColor(i);
             
             // Background
             g2d.setColor(trackColor);

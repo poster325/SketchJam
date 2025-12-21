@@ -52,8 +52,8 @@ public class SoundManager {
     private String selectedPianoSF2 = null;
     private String selectedGuitarSF2 = null;
     
-    // Note names matching ColorPalette order
-    public static final String[] NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    // Note names - use centralized Colors class
+    public static final String[] NOTE_NAMES = Colors.NOTE_NAMES;
     
     
     // Drum MIDI note numbers
@@ -1050,19 +1050,19 @@ public class SoundManager {
         final MidiChannel distCh = (distortionLoaded && distortionChannels != null && distortionGuitarProgram >= 0)
                 ? distortionChannels[GUITAR_CHANNEL] : null;
 
-        // ✅ color 기반 saturation 그대로 사용
+        // Use color-based saturation for clean/distortion mix
         final float saturation = getSaturationFromColor(color);
         final float[] mix = getMixRatios(saturation);
         final int cleanVelocity = (int)(baseVelocity * mix[0]);
         final int distVelocity  = (int)(baseVelocity * mix[1]);
 
-        // 리트리거 제한 그대로
+        // Retrigger rate limiting
         long now = System.currentTimeMillis();
         Long lastPlay = guitarLastPlayTime.get(midiNote);
         if (lastPlay != null && (now - lastPlay) < MIN_RETRIGGER_INTERVAL) return;
         guitarLastPlayTime.put(midiNote, now);
 
-        // height 기반 링타임 그대로
+        // Height-based ring time
         final int ringTime = (int)(50 * Math.pow(40, (heightPx - 100) / 400.0));
 
         final long thisVersion = ++guitarNoteCounter;
@@ -1152,7 +1152,7 @@ public class SoundManager {
             case "Drum":
             case "Snare":
             case "Snare Drum":
-                // ✅ drumKey를 그대로 사용 (여러 스네어/톰 지원 가능)
+                // Use drumKey directly (supports multiple snare/tom types)
                 vel = Math.max(1, (int)(volume * 127));
                 channels[DRUM_CHANNEL].noteOn(event.drumKey, vel);
                 break;
@@ -1160,27 +1160,27 @@ public class SoundManager {
     }
 
     private int mapDrumKeyToMidi(String type, int drumKey) {
-        // 예시: 킥/스네어 각각에 대해 size variant를 다른 MIDI note로 매핑
+        // Map size variant to different MIDI notes for kick/snare
         if (type.equals("Snare Drum")) {
-            // snare variants
+            // Snare variants
             return switch (drumKey) {
                 case 0 -> SNARE_CENTER;  // Snare
                 case 1 -> 40;  // Electric Snare
-                default -> SNARE_RIM; // Side Stick 등
+                default -> SNARE_RIM; // Side Stick
             };
         } else {
-            // kick variants
+            // Kick variants
             return switch (drumKey) {
                 case 0 -> BASS_DRUM;  // Bass Drum 1
                 case 1 -> 35;  // Acoustic Bass Drum
-                default -> 41; // Low Floor Tom 같은 다른 저역 타격으로 대체 가능
+                default -> 41; // Low Floor Tom as alternative
             };
         }
     }
 
     public static int uiPitchToMidi(int uiOctave, int noteIndex) {
         int midiOctave = uiOctave; 
-        return (midiOctave + 1) * 12 + noteIndex; // C4=60 컨벤션이라면 이렇게
+        return (midiOctave + 1) * 12 + noteIndex; // C4=60 convention
     }
     
     /**

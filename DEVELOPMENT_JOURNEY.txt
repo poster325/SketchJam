@@ -1,0 +1,215 @@
+SKETCHJAM DEVELOPMENT JOURNEY
+==============================
+
+PHASE 1: INITIAL CREATION
+-------------------------
+- Created SketchJam as a Java Swing drawing application
+- Core concept: Draw shapes on canvas, each shape becomes a musical instrument
+- Four instrument types based on shape:
+  * Piano (vertical rectangles)
+  * Guitar (horizontal rectangles)
+  * Drum (circles)
+  * Snare Drum (small circles)
+- Color determines pitch (hue maps to musical notes C through B)
+- Size determines octave/duration/drum type
+- Opacity determines volume
+
+PHASE 2: RECORDING SYSTEM
+-------------------------
+- Added recording UI with play/record buttons
+- Implemented TrackManager for multi-track recording
+- Time-based recording: stored note events with timestamps
+- Added BPM control for tempo adjustment
+- Added loop functionality with beat options (2, 4, 8, 16, 32 beats)
+- Created Track class for storing note events
+
+PHASE 3: SOUNDFONT INTEGRATION
+------------------------------
+- Integrated SF2 SoundFont support for realistic instrument sounds
+- Created SF2Manager for selecting different soundfonts per instrument
+- Added soundfonts folder for melodic instruments (piano, guitar)
+- Added separate drum soundfonts
+- Implemented distortion folder for 8-bit and distortion sounds
+- Created saturation-based mixing between clean and distortion sounds
+
+PHASE 4: ADDITIONAL FEATURES
+----------------------------
+- Added ScaleSelector for musical scale presets (Major, Minor, Pentatonic, etc.)
+- Implemented EQPanel for bass/treble adjustment
+- Created FileManager for save/load functionality (.skj files)
+- Added FilePanel with New/Open/Save buttons
+- Created LogoPanel with SketchJam branding
+- Added ResourceLoader for managing assets and paths
+
+PHASE 5: METRONOME & TIMING
+---------------------------
+- Added metronome functionality during playback
+- Fixed low frequency issues with metronome clicks
+- Added count-in (4 beats) before recording starts
+- Fixed octave calculation issues in recorded playback
+
+PHASE 6: BUG FIXES - EARLY
+--------------------------
+- Solved recorded track playback issues
+- Fixed piano tone calculation problems
+- Implemented drum color change functionality
+- Fixed various audio timing inconsistencies
+
+PHASE 7: WINDOW SCALABILITY
+---------------------------
+- Made application window resizable
+- Added minimum size constraints (800x600)
+- Created updateLayout() method for dynamic component positioning
+- All panels now adjust to window size changes
+
+PHASE 8: TOUCH TO KEYBOARD
+--------------------------
+- Attempted touch screen support for touchable monitors
+- Reverted touch support due to complexity
+- Replaced with keyboard shortcuts: T, Y, U, I act as mouse clicks
+- Better playing experience for live performance
+
+PHASE 9: MIDI SEQUENCER ARCHITECTURE
+------------------------------------
+- Identified critical bug: recorded tracks didn't update when elements changed
+- Major architectural decision: convert from time-based to beat-based system
+- Created MidiNote class for individual note data
+- Created MidiSequence class for note collection management
+- Created MidiSequencerPanel as visual piano roll editor
+- Positioned MIDI panel above canvas (200px height)
+- Beat-based timing allows BPM changes without re-recording
+
+PHASE 10: DYNAMIC ELEMENT LINKING
+---------------------------------
+- Added UUID (elementId) to all canvas elements
+- Recorded notes now store element reference, not just values
+- During playback, current element properties are looked up dynamically
+- Changing element color/size on canvas affects recorded track playback
+
+PHASE 11: MIDI INTERFACE REFINEMENT
+-----------------------------------
+- Changed from preset note rows to dynamic rows based on canvas elements
+- Each element gets its own row in the MIDI sequencer
+- Added Alt+scroll for vertical navigation through rows
+- Aligned everything to 25px grid for consistency
+- Added track colors: each recording layer has distinct color
+- MIDI notes display in their track's color
+- Removed track count limit (was previously capped at 4)
+- Moved zoom indicator to bottom-left corner of canvas
+
+PHASE 12: MIDI NOTE EDITING
+---------------------------
+- Fixed note dragging (was extending instead of moving)
+- Reduced resize handle detection zone (max 6px, smart for short notes)
+- Changed drag logic: store original positions, calculate from there, snap final
+- Added whitening highlight for selected notes (semi-transparent white overlay)
+- Added arrow key movement for selected notes
+- Added Alt+drag to duplicate notes while moving
+- Added S+drag for duration adjustment (cursor follows)
+- Added Ctrl+Z/Y for undo/redo in MIDI panel
+- Implemented undo/redo stack with 50 state maximum
+
+PHASE 13: TRACK MANAGEMENT FIXES
+--------------------------------
+- Fixed Track 1 showing before any recording
+- Fixed new tracks not being added on loop
+- Track index now starts at -1, increments on first record and each loop
+- Implemented track deletion with proper note removal
+
+PHASE 14: CANVAS QUASI-MODES
+----------------------------
+- Added 'S' key quasi-mode for height scaling
+  * Hold S, drag element to change height
+  * Works on all instruments
+  * Changes octave for piano, duration for guitar
+- Added 'A' key quasi-mode for width scaling
+  * Hold A, drag guitar to change width
+  * Changes octave for guitar strings
+- Added 'C' + Click to select all elements of same color
+- Cursor changes to indicate active quasi-mode
+
+PHASE 15: AUDIO CONSISTENCY
+---------------------------
+- Fixed velocity calculation inconsistency (now volume * 100 everywhere)
+- Fixed piano octave calculation (added +1 offset consistently)
+- Fixed getNoteIndexFromColor to use Math.round() in all locations
+- Unified playback sound with instrument mode sound
+
+PHASE 16: LATENCY COMPENSATION
+------------------------------
+- Identified internal latency in distortion folder SF2 files:
+  * 8bitsf.SF2 (8-bit piano sound)
+  * Distortion_Guitar.sf2 (distorted guitar)
+- These SF2s have approximately 125ms internal delay
+- Implemented per-note compensation:
+  * When distortion SF2s are loaded, Piano/Guitar notes trigger 125ms early
+  * Drums always trigger on beat (no latency issues)
+  * All instruments now play in sync together
+- Compensation converts 125ms to beats based on current BPM
+
+FINAL ARCHITECTURE
+==================
+
+Core Classes:
+- Main.java: Entry point
+- SketchJamApp.java: Main JFrame window
+- SketchCanvas.java: Drawing area with element management
+
+Elements:
+- DrawableElement.java: Interface for all elements
+- AbstractElement.java: Base class with UUID
+- PianoElement.java: Vertical rectangle instrument
+- GuitarElement.java: Horizontal rectangle instrument
+- DrumElement.java: Circle instrument
+- SnareDrumElement.java: Small circle instrument
+
+Audio:
+- SoundManager.java: MIDI synthesis, SF2 loading, EQ processing
+- SF2Manager.java: Soundfont selection UI
+- ScaleSelector.java: Musical scale presets
+
+Recording:
+- RecordPanel.java: Recording/playback control hub
+- Track.java: Legacy note event storage
+- TrackManager.java: Legacy multi-track management
+- MidiNote.java: Beat-based note data
+- MidiSequence.java: Note collection with undo/redo
+- MidiSequencerPanel.java: Visual piano roll editor
+
+UI Panels:
+- ColorPalette.java: Color/note selection
+- EQPanel.java: Bass/treble sliders
+- FilePanel.java: New/Open/Save buttons
+- LogoPanel.java: Branding
+
+Utilities:
+- FontManager.java: Custom font loading
+- FileManager.java: Project save/load
+- ProjectData.java: Serialization structure
+- ResourceLoader.java: Asset path management
+- UndoRedoManager.java: Canvas undo/redo
+
+KEY DESIGN DECISIONS
+====================
+
+1. Color = Pitch
+   Hue (0-360) maps to 12 semitones (C, C#, D, D#, E, F, F#, G, G#, A, A#, B)
+
+2. Saturation = Distortion Mix
+   Higher saturation blends more distortion sound with clean sound
+
+3. Size = Musical Property
+   Piano height = octave, Guitar height = duration, Drum size = drum type
+
+4. Opacity = Volume
+   Element opacity directly controls note velocity
+
+5. Beat-based Recording
+   Notes stored in beats, not milliseconds, allowing BPM changes
+
+6. Element References
+   Notes link to element IDs, enabling dynamic property updates
+
+7. Per-instrument Latency Compensation
+   Only compensates instruments using high-latency SF2 files
+

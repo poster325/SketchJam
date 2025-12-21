@@ -10,17 +10,6 @@ public class TrackManager {
     
     private static final int MAX_TRACKS = 7;
     
-    // Track colors
-    private static final Color[] TRACK_COLORS = {
-        new Color(0x00, 0xBF, 0xFF), // Track 1 - Cyan/Blue
-        Color.RED,                    // Track 2 - Red
-        new Color(0xFF, 0x8C, 0x00), // Track 3 - Orange
-        new Color(0xFF, 0xD7, 0x00), // Track 4 - Gold/Yellow
-        new Color(0x32, 0xCD, 0x32), // Track 5 - Lime Green
-        new Color(0x00, 0xCE, 0xD1), // Track 6 - Dark Turquoise
-        new Color(0x94, 0x00, 0xD3), // Track 7 - Dark Violet
-    };
-    
     private List<Track> tracks;
     private Track currentRecordingTrack;
     private long recordingStartTime;
@@ -46,7 +35,7 @@ public class TrackManager {
         void onTracksUpdated();
         void onPlayNote(Track.NoteEvent event);
 
-        // 최대 트랙 도달 등으로 녹음이 자동 종료될 때
+        // Called when recording is auto-stopped (e.g., max tracks reached)
         void onRecordingAutoStopped(String reason);
         
         // Called when loop restarts (for metronome sync)
@@ -76,24 +65,24 @@ public class TrackManager {
         updateLoopDuration();
         long newLoop = this.loopDurationMs;
 
-        // 루프 모드일 때만 "한 마디" 기준으로 맞춰주면 됨
+        // Only retime to new loop when in loop mode
         if (isLooping && oldLoop > 0 && newLoop > 0 && oldBpm != bpm) {
             for (Track t : tracks) {
                 t.retimeToNewLoop(oldLoop, newLoop);
             }
             if (currentRecordingTrack != null) {
-                // 녹음 중인 트랙도 루프 기준으로 맞춰주려면 이것도 처리
+                // Also retime the currently recording track
                 currentRecordingTrack.retimeToNewLoop(oldLoop, newLoop);
             }
         }
 
-        // 타이머들이 옛 delay를 가지고 있을 수 있으니, 루프 타이머는 재설정
+        // Timers may have old delays, so reset loop timers
         if (isLooping) {
             if (recordingLoopTimer != null) setupLoopRecordingTimer();
             if (playbackLoopTimer != null) setupLoopPlaybackTimer();
         }
 
-        // 재생 중이면 기준점도 리셋해주는 게 안전
+        // If playing, reset the reference point for safety
         if (isPlaying) {
             playbackStartTime = System.currentTimeMillis();
             lastPlayedTime = -1;
@@ -141,7 +130,7 @@ public class TrackManager {
         
         // Create new track
         int trackNum = tracks.size() + 1;
-        Color trackColor = TRACK_COLORS[(trackNum - 1) % TRACK_COLORS.length];
+        Color trackColor = Colors.getTrackColor(trackNum - 1);
         currentRecordingTrack = new Track("TRACK " + trackNum, trackColor, currentBpm);
         
         recordingStartTime = System.currentTimeMillis();
@@ -231,7 +220,7 @@ public class TrackManager {
                 if (tracks.size() < MAX_TRACKS) {
                     // Start a new track
                     int trackNum = tracks.size() + 1;
-                    Color trackColor = TRACK_COLORS[(trackNum - 1) % TRACK_COLORS.length];
+                    Color trackColor = Colors.getTrackColor(trackNum - 1);
                     currentRecordingTrack = new Track("TRACK " + trackNum, trackColor, currentBpm);
                     recordingStartTime = System.currentTimeMillis();
                     System.out.println("Loop recording: new track " + trackNum);
@@ -473,13 +462,13 @@ public class TrackManager {
     }
 
     /**
-     * 로드 이후 색 재할당
+     * Reassign track colors after loading
      */
 
     public void normalizeTrackMetaAfterLoad() {
     for (int i = 0; i < tracks.size(); i++) {
             tracks.get(i).setName("TRACK " + (i + 1));
-            tracks.get(i).setColor(TRACK_COLORS[i % TRACK_COLORS.length]);
+            tracks.get(i).setColor(Colors.getTrackColor(i));
         }
         notifyTracksUpdated();
     }

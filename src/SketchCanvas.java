@@ -1218,20 +1218,19 @@ public class SketchCanvas extends JPanel {
         String type = element.getElementType();
 
         if (type.equals("Drum") || type.equals("Snare Drum")) {
-            int size = element.getBounds().width; // 원형이면 width==height
+            int size = element.getBounds().width; // For circular elements, width == height
             if (size < 40) return 0;
             if (size < 70) return 1;
             return 2;
         }
 
         if (type.equals("Piano")) {
-            // ❌ octave 변수가 없으니 직접 쓰면 안 됨
-            // ✅ 기존 함수로 octave를 구해서 variant로 쓰기
+            // Use existing function to get octave as variant
             return getOctaveFromElement(element);
         }
 
         if (type.equals("Guitar")) {
-            // 기타는 원하면 높이를 variant로 저장 가능
+            // Store height as variant for guitar
             return element.getBounds().height;
         }
 
@@ -1244,8 +1243,7 @@ public class SketchCanvas extends JPanel {
         if (mapped == null) return 3;
 
         try {
-            // 네 mapped 포맷에 맞춰 여기만 정확히 파싱하면 됨
-            // 예: "C 3, ..." 혹은 "C 3"
+            // Parse according to mapped format: "C 3, ..." or "C 3"
             String[] parts = mapped.split(",")[0].trim().split(" ");
             return Integer.parseInt(parts[1]);
         } catch (Exception e) {
@@ -1257,8 +1255,7 @@ public class SketchCanvas extends JPanel {
         Rectangle b = element.getBounds();
         int size = Math.max(b.width, b.height);
 
-        // 너희 DrumElement의 스냅 규칙이 있으면 거기에 맞춰 구간을 잡는 게 좋음.
-        // 일단 예시:
+        // Map drum size to key based on DrumElement snap rules
         if (size < 50) return 0;      // small
         if (size < 100) return 1;     // mid
         return 2;                     // big
@@ -1303,13 +1300,13 @@ public class SketchCanvas extends JPanel {
 
         String s = mapped.trim().toLowerCase();
 
-        // 너가 올려준 상수 기준:
+        // Map drum type to MIDI note:
         // HIGH_TOM=50, MID_TOM=47, FLOOR_TOM=43, BASS_DRUM=36
         if (s.contains("high") && s.contains("tom")) return 50;
         if (s.contains("mid") && s.contains("tom")) return 47;
         if (s.contains("floor") && s.contains("tom")) return 43;
 
-        // "bass drum" 혹은 그 외 기본
+        // Default to bass drum
         return 36;
     }
 
@@ -1318,13 +1315,12 @@ public class SketchCanvas extends JPanel {
 
         String s = mapped.trim().toLowerCase();
 
-        // 너가 올려준 상수 기준:
+        // Map snare type to MIDI note:
         // SNARE_RIM=37, SNARE_CENTER=38
-        // mapped가 어떤 문자열을 주는지에 따라 조건을 조금 넓게 잡음
         if (s.contains("rim")) return 37;
         if (s.contains("center")) return 38;
 
-        // 혹시 "snare rim"/"snare center" 말고 다른 표현이면 기본 center
+        // Default to snare center
         return 38;
     }
 
@@ -1333,15 +1329,14 @@ public class SketchCanvas extends JPanel {
             if (mapped == null) return fallback;
 
             if ("piano".equals(kind)) {
-                // 예: "Octave 3" 같은 형태를 기대
-                // 네 코드가 mapped.split(" ")[1]을 쓰는 형태였음
+                // Expected format: "Octave 3"
                 String[] sp = mapped.trim().split("\\s+");
                 if (sp.length >= 2) return Integer.parseInt(sp[1]);
                 return fallback;
             }
 
             if ("guitar".equals(kind)) {
-                // 예: "Octave 3, something" 같은 형태를 기대
+                // Expected format: "Octave 3, something"
                 String left = mapped.split(",")[0];
                 String[] sp = left.trim().split("\\s+");
                 if (sp.length >= 2) return Integer.parseInt(sp[1]);

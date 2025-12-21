@@ -12,23 +12,10 @@ public class ScalePreset extends JPanel {
     private static final int CELL_SIZE = 50;
     private static final int COLS = 7;
     
-    // All 12 colors for all notes
-    private static final Color[] ALL_COLORS = {
-        Color.decode("#FF0000"), // C  - Red
-        Color.decode("#FF8000"), // C# - Orange
-        Color.decode("#FFFF00"), // D  - Yellow
-        Color.decode("#80FF00"), // D# - Yellow-Green
-        Color.decode("#00FF00"), // E  - Green
-        Color.decode("#00FF80"), // F  - Green-Cyan
-        Color.decode("#00FFFF"), // F# - Cyan
-        Color.decode("#0080FF"), // G  - Cyan-Blue
-        Color.decode("#0000FF"), // G# - Blue
-        Color.decode("#8000FF"), // A  - Purple
-        Color.decode("#FF00FF"), // A# - Magenta
-        Color.decode("#FF0080"), // B  - Pink-Red
-    };
+    // All 12 colors for all notes - use centralized Colors class
+    private static final Color[] ALL_COLORS = Colors.NOTE_COLORS;
     
-    private static final String[] ALL_NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    private static final String[] ALL_NOTE_NAMES = Colors.NOTE_NAMES;
     
     // Current scale note indices (0-11 for each of 7 notes)
     private int[] scaleNoteIndices = {0, 2, 4, 5, 7, 9, 11}; // Default: C Major

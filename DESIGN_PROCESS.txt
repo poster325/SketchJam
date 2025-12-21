@@ -1,0 +1,758 @@
+SKETCHJAM DESIGN & DEVELOPMENT PROCESS
+========================================
+
+================================================================================
+PART 1: DESIGN INSPIRATIONS & INITIAL IDEAS
+================================================================================
+
+CORE INSPIRATION
+----------------
+The concept emerged from the idea of making music creation visual and intuitive.
+Traditional music software (DAWs) require understanding of musical notation,
+piano rolls, and complex interfaces. SketchJam asks: "What if drawing IS music?"
+
+Initial Inspirations:
+- Patatap (web app) - visual shapes that trigger sounds
+- Incredibox - drag-and-drop music creation
+- Electroplankton (Nintendo DS) - playful, visual music toys
+- Children's drawing apps - simplicity and immediacy
+
+INITIAL CONCEPT SKETCH (ASCII Representation)
+----------------------------------------------
+
+    +--------------------------------------------------+
+    |  [Logo]  [Colors]  [Scales]  [SF2]  [BPM] [Rec]  |
+    +--------------------------------------------------+
+    |                                                  |
+    |     +---------+                                  |
+    |     |  PIANO  |  <- Tall rectangle = Piano       |
+    |     |         |     Height = Octave              |
+    |     +---------+     Color = Note (C, D, E...)    |
+    |                                                  |
+    |     +-------------------+                        |
+    |     |      GUITAR       |  <- Wide rect = Guitar |
+    |     +-------------------+     Width = Octave     |
+    |                                                  |
+    |           ( O )  <- Circle = Drum                |
+    |            (o)   <- Small circle = Snare         |
+    |                                                  |
+    +--------------------------------------------------+
+
+IDEAS THAT SURVIVED
+-------------------
+
+1. COLOR = PITCH (Survived & Core Feature)
+   Original Idea: Map hue (0-360°) to 12 semitones
+   
+   Implementation:
+   ```
+   float hue = Color.RGBtoHSB(r, g, b, null)[0];
+   int noteIndex = (int)Math.round(hue * 12) % 12;
+   // 0=C, 1=C#, 2=D, 3=D#, 4=E, 5=F, 6=F#, 7=G, 8=G#, 9=A, 10=A#, 11=B
+   ```
+   
+   This became the fundamental principle. Users intuitively understand
+   "red sounds different from blue" without needing musical training.
+
+2. SHAPE = INSTRUMENT (Survived & Core Feature)
+   Original Idea: Different shapes trigger different instruments
+   - Vertical rectangle → Piano (keys are vertical)
+   - Horizontal rectangle → Guitar (strings are horizontal)
+   - Circle → Drum (round like drum heads)
+   
+   This visual metaphor stuck throughout development.
+
+3. SIZE = MUSICAL PROPERTY (Survived & Evolved)
+   Original: Bigger = louder
+   Evolved to:
+   - Piano height → Octave (100px steps: Octave 2-6)
+   - Guitar height → Ring duration (how long note sustains)
+   - Guitar width → Octave (thin=high, thick=low, like real strings)
+   - Drum size → Drum type (small=hi-tom, large=bass drum)
+
+4. OPACITY = VOLUME (Survived)
+   Original idea remained unchanged.
+   0.0 (transparent) = silent
+   1.0 (opaque) = full volume
+   Intuitive: "faded = quiet"
+
+IDEAS THAT DID NOT SURVIVE
+--------------------------
+
+1. ROTATION = EFFECT (Did Not Survive)
+   Original Idea: Rotating an element would add effects
+   - 45° rotation = reverb
+   - 90° rotation = delay
+   - 180° rotation = reverse playback
+   
+   Why Removed: Too complex to implement visually. Users couldn't 
+   remember what angles meant. Replaced with saturation-based 
+   distortion mixing which is more intuitive.
+
+2. TOUCH SCREEN SUPPORT (Did Not Survive)
+   Original Idea: Full multi-touch support for touchable monitors
+   - Pinch to zoom
+   - Multi-finger drawing
+   - Touch-based recording
+   
+   Why Removed: Java Swing has poor touch support. Mouse events
+   were inconsistent. Replaced with keyboard shortcuts (T, Y, U, I)
+   which proved more reliable for live performance.
+
+3. ELEMENT STACKING = CHORD (Did Not Survive)
+   Original Idea: Overlapping elements would play as a chord
+   
+   Why Removed: Difficult to select individual elements when stacked.
+   Users can still create chords by clicking multiple elements quickly.
+
+4. SHAPE MORPHING (Did Not Survive)
+   Original Idea: Drag corners to morph between instrument types
+   
+   Why Removed: Confusing interaction. Users preferred explicit
+   instrument selection from toolbar.
+
+================================================================================
+PART 2: EVOLUTION OF SURVIVING IDEAS
+================================================================================
+
+EVOLUTION 1: RECORDING SYSTEM
+-----------------------------
+
+Stage 1 - Time-Based Recording (Initial)
+```
+class NoteEvent {
+    long timestampMs;      // When note was played
+    String instrumentType;
+    int midiNote;
+    float velocity;
+}
+```
+Problem: Changing BPM after recording broke timing.
+
+Stage 2 - Beat-Based Recording (Final)
+```
+class MidiNote {
+    double startBeat;       // Position in beats, not milliseconds
+    double durationBeats;   // Duration in beats
+    String instrumentType;
+    int midiNote;
+    String elementId;       // Reference to canvas element
+}
+```
+Solution: Store beats, calculate milliseconds at playback using current BPM.
+
+
+EVOLUTION 2: ELEMENT-TO-SOUND RELATIONSHIP
+------------------------------------------
+
+Stage 1 - Static Recording
+Recording stored all note properties at record time.
+Changing element after recording had no effect.
+
+Stage 2 - Dynamic Linking (Final)
+```
+// During recording:
+MidiNote note = new MidiNote(...);
+note.setElementId(element.getElementId());  // Store UUID reference
+
+// During playback:
+DrawableElement element = canvas.getElementById(note.getElementId());
+int currentColor = element.getColor().getRGB();  // Get CURRENT color
+int noteIndex = getNoteIndexFromColor(element.getColor());  // Recalculate
+```
+Now changing element color changes the recorded note's pitch!
+
+
+EVOLUTION 3: MIDI SEQUENCER INTERFACE
+-------------------------------------
+
+Initial Concept:
+```
++------------------------------------------+
+| C5  |====|    |==|                      |
+| B4  |        |====|                      |
+| A4  |    |==|        |====|              |
+| G4  |                    |==|            |
++------------------------------------------+
+```
+Fixed rows for each note (C2-C6 = 48 rows)
+Problem: Too many rows, mostly empty.
+
+Final Design:
+```
++------------------------------------------+
+| Piano @ Octave 3  |====|    |==|        |  <- Element-based rows
+| Guitar @ Oct 2    |        |====|        |  <- Only shows what exists
+| Drum: Floor Tom   |    |==|        |==|  |  <- Dynamic, no wasted space
++------------------------------------------+
+```
+Rows generated from actual canvas elements. No empty rows.
+
+
+EVOLUTION 4: DISTORTION/SATURATION SYSTEM
+-----------------------------------------
+
+Initial Idea: Binary distortion toggle
+
+Final Implementation: Saturation-based mixing
+```
+// Color saturation (0-1) controls clean/distortion mix
+float saturation = getSaturationFromColor(color);
+
+if (saturation >= 0.85f) {
+    return new float[] {0.0f, 1.0f};    // 100% distortion
+} else if (saturation >= 0.70f) {
+    return new float[] {0.4f, 0.8f};    // 40% clean, 80% distortion
+} else if (saturation >= 0.55f) {
+    return new float[] {0.8f, 0.4f};    // 80% clean, 40% distortion
+} else {
+    return new float[] {1.0f, 0.0f};    // 100% clean
+}
+```
+Vivid colors = distorted, Pastel colors = clean
+
+================================================================================
+PART 3: NEW IDEAS THAT EMERGED DURING DEVELOPMENT
+================================================================================
+
+1. QUASI-MODE SCALING
+   Emerged from: Users struggling with small resize handles
+   Solution: Hold 'S' to enter height-scaling mode, 'A' for width
+   
+   Before: Tiny 4px handles, hard to grab
+   After: Entire element becomes scalable while key held
+   ```
+   if (isHeightScaleMode && selectedElement != null) {
+       int dy = current.y - dragStart.y;
+       int newHeight = snapValue(elementStartSize.height + dy);
+       selectedElement.setSize(selectedElement.getSize().width, newHeight);
+   }
+   ```
+
+2. TRACK COLORING IN MIDI
+   Emerged from: Hard to distinguish overlapping notes
+   Solution: Each recording pass gets unique color
+   ```
+   Color[] TRACK_COLORS = {
+       new Color(0x00, 0xBF, 0xFF),  // Cyan
+       new Color(0xFF, 0x69, 0xB4),  // Pink
+       new Color(0x32, 0xCD, 0x32),  // Green
+       new Color(0xFF, 0xA5, 0x00),  // Orange
+       // ... more colors
+   };
+   ```
+
+3. C + CLICK COLOR SELECTION
+   Emerged from: Need to select all elements of same note
+   Solution: Hold C, click any element to select all with matching color
+   ```
+   if (e.isControlDown() && clicked != null) {
+       Color targetColor = clicked.getColor();
+       for (DrawableElement elem : elements) {
+           if (colorsMatch(elem.getColor(), targetColor)) {
+               elem.setSelected(true);
+           }
+       }
+   }
+   ```
+
+4. PER-NOTE LATENCY COMPENSATION
+   Emerged from: 8-bit SF2 files had internal 125ms delay
+   Problem: Piano (8bit) was late compared to drums
+   Solution: Trigger Piano/Guitar 125ms early when those SF2s loaded
+   ```
+   private double getNoteCompensationBeats(MidiNote note) {
+       if ("Piano".equals(type) || "Guitar".equals(type)) {
+           if (SoundManager.getInstance().isDistortionLoaded()) {
+               return 125.0 * bpm / 60000.0;  // 125ms in beats
+           }
+       }
+       return 0.0;  // Drums: no compensation
+   }
+   ```
+
+================================================================================
+PART 4: PROBLEMS AND SOLUTIONS
+================================================================================
+
+PROBLEM 1: FAST DRAG MISSING ELEMENTS
+--------------------------------------
+Issue: When dragging mouse quickly, intermediate elements were skipped.
+
+Before (Broken):
+```
+// Only checked element at current mouse position
+DrawableElement element = getElementAt(currentPoint);
+if (element != null) playNote(element);
+```
+
+After (Fixed):
+```
+// Check all points along the drag path
+private List<DrawableElement> getElementsAlongPath(Point start, Point end) {
+    List<DrawableElement> result = new ArrayList<>();
+    double distance = start.distance(end);
+    int steps = Math.max(1, (int)(distance / 5));  // Check every 5 pixels
+    
+    for (int i = 0; i <= steps; i++) {
+        double t = (double) i / steps;
+        int x = (int)(start.x + t * (end.x - start.x));
+        int y = (int)(start.y + t * (end.y - start.y));
+        DrawableElement elem = getElementAt(new Point(x, y));
+        if (elem != null && !result.contains(elem)) {
+            result.add(elem);
+        }
+    }
+    return result;
+}
+```
+
+PROBLEM 2: MIDI NOTES EXTENDING INSTEAD OF MOVING
+-------------------------------------------------
+Issue: Dragging a MIDI note made it longer, not moved it.
+
+Root Cause: Resize handle detection was too aggressive (8px zone)
+and drag calculation used incremental updates that snapped to zero.
+
+Before (Broken):
+```
+// Always triggered resize mode
+private boolean isNearRightEdge(Point p, Rectangle noteRect) {
+    return p.x >= noteRect.x + noteRect.width - 8;  // 8px zone
+}
+
+// Incremental update snapped to zero
+double delta = snapToGrid(dragCurrent.x - dragStart.x);  // Often 0!
+note.setStartBeat(note.getStartBeat() + delta);
+```
+
+After (Fixed):
+```
+// Smart resize zone: smaller for short notes, none for tiny notes
+private boolean isNearRightEdge(Point p, Rectangle noteRect) {
+    if (noteRect.width < 15) return false;  // Too small to resize
+    int zone = Math.min(6, noteRect.width / 4);  // Max 6px or 1/4 width
+    return p.x >= noteRect.x + noteRect.width - zone;
+}
+
+// Store original, calculate from there, snap final result
+Map<MidiNote, Double> originalPositions = new HashMap<>();
+// On drag start:
+for (MidiNote note : selectedNotes) {
+    originalPositions.put(note, note.getStartBeat());
+}
+// On drag:
+double totalDelta = xToBeat(dragCurrent.x) - xToBeat(dragStart.x);
+for (MidiNote note : selectedNotes) {
+    double newPos = snapToGrid(originalPositions.get(note) + totalDelta);
+    note.setStartBeat(newPos);
+}
+```
+
+PROBLEM 3: PLAY/RECORD BUTTONS NOT TOGGLING
+-------------------------------------------
+Issue: Pressing record button couldn't stop recording.
+
+Root Cause: Button checked old TrackManager state, not new MIDI state.
+
+Before (Broken):
+```
+// In handleButtonClick:
+if (trackManager.isRecording()) {  // Wrong check!
+    stopRecording();
+}
+```
+
+After (Fixed):
+```
+// Check the correct flag
+if (isRecordingToMidi) {
+    stopRecording();
+} else {
+    startRecording();
+}
+```
+
+PROBLEM 4: NOTES PLAYING WRONG PITCH
+------------------------------------
+Issue: Same element played different notes in instrument mode vs playback.
+
+Root Cause: Inconsistent rounding in color-to-note calculation.
+
+Before (Broken):
+```
+// SoundManager.java - used floor
+int noteIndex = (int)(hue * 12) % 12;
+
+// RecordPanel.java - used round
+int noteIndex = (int)Math.round(hue * 12) % 12;
+
+// SketchCanvas.java - used different formula
+int noteIndex = (int)(hue * 11.99f);
+```
+
+After (Fixed):
+```
+// ALL files now use consistent formula:
+int noteIndex = (int)Math.round(hue * 12) % 12;
+```
+
+PROBLEM 5: VELOCITY INCONSISTENCY
+---------------------------------
+Issue: Notes sounded different between live play and playback.
+
+Root Cause: Different velocity calculations.
+
+Before (Broken):
+```
+// Instrument mode (SoundManager):
+int velocity = (int)(volume * 127);
+
+// Playback mode (RecordPanel):
+int velocity = (int)(volume * 100);
+```
+
+After (Fixed):
+```
+// Everywhere now:
+int velocity = Math.max(1, Math.min(127, (int)(volume * 100)));
+```
+
+================================================================================
+PART 5: CLASS HIERARCHY REFACTORING
+================================================================================
+
+REFACTOR 1: ADDING ELEMENT IDs
+------------------------------
+
+Before:
+```
+interface DrawableElement {
+    void draw(Graphics2D g);
+    Rectangle getBounds();
+    Color getColor();
+    void setColor(Color c);
+    // ... basic properties
+}
+
+abstract class AbstractElement implements DrawableElement {
+    protected int x, y, width, height;
+    protected Color color;
+    protected float opacity;
+    // No unique identifier!
+}
+```
+
+Problem: No way to reference specific elements after recording.
+
+After:
+```
+interface DrawableElement {
+    // ... existing methods ...
+    String getElementId();  // NEW
+}
+
+abstract class AbstractElement implements DrawableElement {
+    // ... existing fields ...
+    protected String elementId;  // NEW: UUID
+    
+    public AbstractElement(...) {
+        // ...
+        this.elementId = UUID.randomUUID().toString();  // Generated on creation
+    }
+    
+    @Override
+    public String getElementId() {
+        return elementId;
+    }
+    
+    public void setElementId(String id) {  // For deserialization
+        this.elementId = id;
+    }
+}
+```
+
+
+REFACTOR 2: RECORDING SYSTEM ARCHITECTURE
+-----------------------------------------
+
+Before (Time-Based):
+```
++----------------+     +---------------+     +--------+
+| RecordPanel    |---->| TrackManager  |---->| Track  |
+| - startRecord()|     | - tracks[]    |     | - notes|
+| - stopRecord() |     | - addNote()   |     +--------+
++----------------+     +---------------+
+                              |
+                              v
+                       +-------------+
+                       | NoteEvent   |
+                       | - timestamp |
+                       | - midiNote  |
+                       +-------------+
+```
+
+After (Beat-Based MIDI):
+```
++----------------+     +------------------+     +--------------+
+| RecordPanel    |---->| MidiSequence     |<----| MidiSeq.Panel|
+| - startRecord()|     | - notes[]        |     | - draw()     |
+| - stopRecord() |     | - addNote()      |     | - edit()     |
+| - playMidi()   |     | - undo/redo      |     +--------------+
++----------------+     +------------------+
+        |                     |
+        |                     v
+        |              +-------------+
+        |              | MidiNote    |
+        |              | - startBeat |
+        |              | - duration  |
+        |              | - elementId |  <-- Links to canvas element
+        |              | - trackIdx  |  <-- Recording layer
+        |              +-------------+
+        |
+        v
++----------------+
+| SketchCanvas   |
+| - getElementById() |  <-- Lookup for dynamic properties
++----------------+
+```
+
+
+REFACTOR 3: SOUND MANAGER DUAL SYNTHESIZER
+------------------------------------------
+
+Before (Single Synth):
+```
++------------------+
+| SoundManager     |
+| - synthesizer    |  <-- One synth for everything
+| - channels[]     |
+| - playPiano()    |
+| - playGuitar()   |
+| - playDrum()     |
++------------------+
+```
+
+After (Dual Synth for Distortion Mixing):
+```
++------------------+
+| SoundManager     |
+| - synthesizer    |  <-- Clean sounds (soundfonts/ folder)
+| - channels[]     |
+|                  |
+| - distortionSynth|  <-- Distortion sounds (distortion/ folder)
+| - distortionCh[] |
+|                  |
+| - getMixRatios() |  <-- Calculate clean/distortion blend
+| - playPiano()    |      based on color saturation
++------------------+
+         |
+         v
+   +-----------+     +-----------+
+   | Clean SF2 |     | Dist SF2  |
+   | Galaxy_   |     | 8bitsf    |
+   | Electric  |     | Distortion|
+   | Pianos    |     | _Guitar   |
+   +-----------+     +-----------+
+```
+
+================================================================================
+PART 6: INTERACTION FLOW DIAGRAMS
+================================================================================
+
+RECORDING FLOW:
+```
+User clicks RECORD
+        |
+        v
++-------------------+
+| Count-in: 4 beats |
+| "1... 2... 3... 4"|
++-------------------+
+        |
+        v
++-------------------+
+| isRecordingToMidi |
+| = true            |
+| recordingStartTime|
+| = now()           |
++-------------------+
+        |
+        v
+User clicks/drags elements
+        |
+        v
++-------------------+
+| For each element: |
+| - Get current beat|
+| - Get element ID  |
+| - Get properties  |
+| - Create MidiNote |
+| - Add to sequence |
++-------------------+
+        |
+        v
+User clicks STOP or loop completes
+        |
+        v
++-------------------+
+| isRecordingToMidi |
+| = false           |
+| Increment track   |
+| index for next    |
++-------------------+
+```
+
+PLAYBACK FLOW:
+```
+User clicks PLAY
+        |
+        v
++-------------------+
+| Start Timer (5ms) |
+| Calculate beat    |
+| from elapsed time |
++-------------------+
+        |
+        v
+For each timer tick:
+        |
+        v
++-------------------+
+| currentBeat =     |
+| elapsed * bpm /   |
+| 60000             |
++-------------------+
+        |
+        v
++-------------------+
+| For each MidiNote:|
+| - Get element by  |
+|   note.elementId  |
+| - Get CURRENT     |
+|   color, size     |
+| - Calculate pitch |
+| - Apply latency   |
+|   compensation    |
+| - If triggerBeat  |
+|   in range: PLAY  |
++-------------------+
+        |
+        v
++-------------------+
+| Update playhead   |
+| visual position   |
++-------------------+
+        |
+        v
+Loop if enabled, else stop at end
+```
+
+ELEMENT CREATION FLOW:
+```
+User selects instrument from palette
+        |
+        v
+User clicks on canvas
+        |
+        v
++-------------------+
+| Create element at |
+| click position    |
+| with current color|
++-------------------+
+        |
+        v
++-------------------+
+| Generate UUID for |
+| element tracking  |
++-------------------+
+        |
+        v
++-------------------+
+| Add to elements[] |
+| Notify MIDI panel |
+| to update rows    |
++-------------------+
+        |
+        v
++-------------------+
+| Save to undo stack|
++-------------------+
+```
+
+================================================================================
+APPENDIX: KEY CODE SNIPPETS
+================================================================================
+
+Color to Note Conversion:
+```java
+private int getNoteIndexFromColor(Color color) {
+    float[] hsb = Color.RGBtoHSB(
+        color.getRed(), 
+        color.getGreen(), 
+        color.getBlue(), 
+        null
+    );
+    float hue = hsb[0];  // 0.0 to 1.0
+    return (int)Math.round(hue * 12) % 12;
+    // Returns 0-11 mapping to C, C#, D, D#, E, F, F#, G, G#, A, A#, B
+}
+```
+
+Saturation to Distortion Mix:
+```java
+private float[] getMixRatios(float saturation) {
+    // Returns [cleanRatio, distortionRatio]
+    if (saturation >= 0.85f) {
+        return new float[] {0.0f, 1.0f};   // Pure distortion
+    } else if (saturation >= 0.70f) {
+        return new float[] {0.4f, 0.8f};   // Mostly distortion
+    } else if (saturation >= 0.55f) {
+        return new float[] {0.8f, 0.4f};   // Mostly clean
+    } else {
+        return new float[] {1.0f, 0.0f};   // Pure clean
+    }
+}
+```
+
+Latency Compensation:
+```java
+private double getNoteCompensationBeats(MidiNote note) {
+    String type = note.getInstrumentType();
+    SoundManager sm = SoundManager.getInstance();
+    
+    // Only Piano/Guitar need compensation when distortion SF2s loaded
+    if ("Piano".equals(type) || "Guitar".equals(type)) {
+        if (sm.isDistortionLoaded()) {
+            // 125ms early trigger, converted to beats
+            return 125.0 * bpm / 60000.0;
+        }
+    }
+    return 0.0;  // Drums: no compensation
+}
+```
+
+Dynamic Property Lookup During Playback:
+```java
+private void playMidiNote(MidiNote note) {
+    // Look up element by ID to use CURRENT properties
+    DrawableElement element = canvas.getElementById(note.getElementId());
+    
+    if (element != null) {
+        // Use current color (user may have changed it)
+        int noteIndex = getNoteIndexFromColor(element.getColor());
+        
+        // Use current size for octave calculation
+        int height = element.getBounds().height;
+        int octave = height / 100 + 1;
+        
+        // Calculate final MIDI note
+        midiNote = (octave + 1) * 12 + noteIndex;
+    }
+    
+    // Play with recalculated values
+    SoundManager.getInstance().playNoteEvent(event);
+}
+```
+

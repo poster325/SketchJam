@@ -17,8 +17,8 @@ public class ColorPalette extends JPanel {
     // Saturation levels: 100%, 80%, 60%, 40%
     private static final float[] SATURATION_LEVELS = {1.0f, 0.8f, 0.6f, 0.4f};
     
-    // Note names for reference
-    public static final String[] NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    // Note names - use centralized Colors class
+    public static final String[] NOTE_NAMES = Colors.NOTE_NAMES;
     
     // 12 colors for 12 notes, starting with C = Red, going around the color wheel
     // C=0°, C#=30°, D=60°, D#=90°, E=120°, F=150°, F#=180°, G=210°, G#=240°, A=270°, A#=300°, B=330°

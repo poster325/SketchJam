@@ -14,15 +14,15 @@ public class Track {
         public final long timestampMs;
         public final String instrumentType;
 
-        // ✅ 최종 재생 단위로 저장
-        public final int midiNote;   // Piano/Guitar용 (예: 60 = C4)
-        public final int drumKey;    // Drum/Snare용 (0=small,1=mid,2=big 등)
+        // Final playback parameters
+        public final int midiNote;   // For Piano/Guitar (e.g., 60 = C4)
+        public final int drumKey;    // For Drum/Snare (0=small, 1=mid, 2=big, etc.)
 
         public final float velocity;
         public final int durationMs;
 
-        public final int colorRGB;     // saturation 계산용
-        public final int heightPx;     // 기타 링타임(또는 기타 톤 파라미터)용
+        public final int colorRGB;     // For saturation calculation
+        public final int heightPx;     // For guitar ring time (or other tone parameters)
         
         public final String elementId; // Reference to the source element for dynamic property lookup
 
@@ -127,7 +127,7 @@ public class Track {
         List<NoteEvent> newEvents = new ArrayList<>(events.size());
         for (NoteEvent e : events) {
             long newTs = (e.timestampMs * newLoopMs) / oldLoopMs;
-            // duration도 같이 스케일할지 선택 가능 (기타 sustain 등)
+            // Scale duration as well (for guitar sustain, etc.)
             int newDur = (int) Math.max(1, (e.durationMs * newLoopMs) / oldLoopMs);
 
             newEvents.add(new NoteEvent(
@@ -146,7 +146,7 @@ public class Track {
         events.clear();
         events.addAll(newEvents);
 
-        // durationMs 갱신
+        // Update durationMs
         long max = 0;
         for (NoteEvent e : events) {
             long end = e.timestampMs + e.durationMs;
