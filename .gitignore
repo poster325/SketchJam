@@ -1,6 +1,7 @@
-# Compiled class files
+# Build output
 out/
-*.class
+dist/
+jpackage-input/
 
 # IDE files
 .idea/
@@ -11,3 +12,12 @@ out/
 .DS_Store
 Thumbs.db
 
+# Temporary files
+*.tmp
+*.bak
+
+# JAR files (built, not distributed)
+*.jar
+
+# ZIP distributions (too large for git)
+*.zip

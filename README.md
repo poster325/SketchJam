@@ -6,13 +6,27 @@ SketchJam is a visual music creation tool where you **draw shapes to make music*
 
 ---
 
-## Getting Started
+## Installation
 
-### Launch the App
-Double-click `build_and_run.bat` or run:
+### Option 1: Windows Executable (Recommended)
+Download `SketchJam-Windows.zip`, extract, and run `SketchJam.exe`.
+No Java installation required!
+
+### Option 2: Run with Java
+If you have Java 17+ installed:
+1. Double-click `build_and_run.bat`
+2. Or run: `java --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED -cp out Main`
+
+### Option 3: Build Executable Yourself
+Requires JDK 14+ with jpackage:
 ```
-java --add-opens java.desktop/com.sun.media.sound=ALL-UNNAMED -cp out Main
+package-exe.bat
 ```
+Creates `dist\SketchJam\SketchJam.exe` with bundled JRE (~340 MB).
+
+---
+
+## Getting Started
 
 ### The Interface
 

@@ -3,7 +3,7 @@ import java.net.URISyntaxException;
 
 /**
  * Utility class to load resources from the correct location
- * whether running from IDE or packaged application.
+ * whether running from IDE, JAR, or jpackage executable.
  */
 public class ResourceLoader {
     
@@ -11,8 +11,11 @@ public class ResourceLoader {
     
     /**
      * Get the base directory where resources are located.
-     * For packaged apps, this is the 'app' folder.
-     * For development, this is the project root.
+     * 
+     * Directory structures supported:
+     * 1. IDE/Development: project_root/out/ -> resources in project_root/
+     * 2. JAR (run.bat): project_root/SketchJam.jar -> resources in project_root/
+     * 3. jpackage: dist/SketchJam/app/SketchJam.jar -> resources in dist/SketchJam/app/
      */
     public static File getBaseDir() {
         if (baseDir != null) {
@@ -28,14 +31,30 @@ public class ResourceLoader {
             // If running from classes, jarLocation is the 'out' folder
             
             if (jarLocation.isFile() && jarLocation.getName().endsWith(".jar")) {
-                // Running from JAR (packaged app)
+                // Running from JAR (packaged app or jpackage)
                 // Resources are in the same folder as the JAR
                 baseDir = jarLocation.getParentFile();
+                
+                // Check if we're in a jpackage 'app' folder
+                // In that case, resources should be in the 'app' folder alongside the JAR
+                System.out.println("JAR location: " + jarLocation.getAbsolutePath());
+                System.out.println("Base dir: " + baseDir.getAbsolutePath());
             } else {
                 // Running from IDE (classes folder)
                 // Go up to project root
                 baseDir = jarLocation.getParentFile();
             }
+            
+            // Verify resources exist, if not try parent
+            File symbolsCheck = new File(baseDir, "symbols");
+            if (!symbolsCheck.exists()) {
+                File parentCheck = new File(baseDir.getParentFile(), "symbols");
+                if (parentCheck.exists()) {
+                    baseDir = baseDir.getParentFile();
+                    System.out.println("Adjusted base dir to parent: " + baseDir.getAbsolutePath());
+                }
+            }
+            
         } catch (URISyntaxException e) {
             // Fallback to current directory
             baseDir = new File(".");
