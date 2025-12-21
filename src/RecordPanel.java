@@ -389,10 +389,9 @@ public class RecordPanel extends JPanel {
             }
             
             // Play notes FIRST (before updating visual playhead)
-            // Apply 125ms compensation for 8bit/distortion SF2 files
-            double compensationBeats = getSF2CompensationBeats();
             for (MidiNote note : seq.getNotes()) {
-                double triggerBeat = note.getStartBeat() - compensationBeats;
+                // Per-note compensation: only for Piano/Guitar using specific SF2s
+                double triggerBeat = note.getStartBeat() - getNoteCompensationBeats(note);
                 if (triggerBeat > lastPlayedBeat && triggerBeat <= currentBeat) {
                     playMidiNote(note);
                 }
@@ -519,23 +518,38 @@ public class RecordPanel extends JPanel {
     }
     
     /**
-     * Get SF2 latency compensation in beats.
-     * Returns 125ms worth of beats ONLY for specific SF2 files: 8bitsf.SF2, Distortion_Guitar.sf2
-     * 125ms = 0.25 beats at 120 BPM, but we calculate based on current BPM.
+     * Get per-note SF2 latency compensation in beats.
+     * Returns 125ms worth of beats ONLY for:
+     * - Piano notes when Piano SF2 is 8bitsf.SF2 or contains "distortion"
+     * - Guitar notes when Guitar SF2 is Distortion_Guitar.sf2 or contains "8bit"
      */
-    private double getSF2CompensationBeats() {
-        // Check if CURRENTLY SELECTED Piano/Guitar SF2 needs compensation
-        boolean needsComp = SoundManager.getInstance().needsLatencyCompensation();
-        if (needsComp) {
-            // 125ms compensation converted to beats at current BPM
-            // 125ms * (bpm / 60000) = beats
-            double comp = 125.0 * bpm / 60000.0;
-            String pianoSF2 = SoundManager.getInstance().getSelectedPianoSF2();
-            String guitarSF2 = SoundManager.getInstance().getSelectedGuitarSF2();
-            System.out.println("SF2 Compensation: " + comp + " beats (piano: " + pianoSF2 + ", guitar: " + guitarSF2 + ")");
-            return comp;
+    private double getNoteCompensationBeats(MidiNote note) {
+        String type = note.getInstrumentType();
+        SoundManager sm = SoundManager.getInstance();
+        
+        // Check Piano notes against Piano SF2
+        if ("Piano".equals(type)) {
+            String sf2 = sm.getSelectedPianoSF2();
+            if (sf2 != null) {
+                String lower = sf2.toLowerCase();
+                if (lower.contains("8bit") || lower.contains("distortion")) {
+                    return 125.0 * bpm / 60000.0;
+                }
+            }
         }
         
+        // Check Guitar notes against Guitar SF2
+        if ("Guitar".equals(type)) {
+            String sf2 = sm.getSelectedGuitarSF2();
+            if (sf2 != null) {
+                String lower = sf2.toLowerCase();
+                if (lower.contains("8bit") || lower.contains("distortion")) {
+                    return 125.0 * bpm / 60000.0;
+                }
+            }
+        }
+        
+        // No compensation for drums or other SF2s
         return 0.0;
     }
     
@@ -615,10 +629,9 @@ public class RecordPanel extends JPanel {
             }
             
             // Play existing notes FIRST
-            // Apply 125ms compensation for 8bit/distortion SF2 files
-            double compensationBeats = getSF2CompensationBeats();
             for (MidiNote note : seq.getNotes()) {
-                double triggerBeat = note.getStartBeat() - compensationBeats;
+                // Per-note compensation: only for Piano/Guitar using specific SF2s
+                double triggerBeat = note.getStartBeat() - getNoteCompensationBeats(note);
                 if (triggerBeat > lastPlayedBeat && triggerBeat <= currentBeat) {
                     playMidiNote(note);
                 }
