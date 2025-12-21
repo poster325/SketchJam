@@ -93,6 +93,14 @@ public class SoundManager {
     public String getSelectedPianoSF2() { return selectedPianoSF2; }
     public String getSelectedGuitarSF2() { return selectedGuitarSF2; }
     
+    /**
+     * Check if distortion SF2 files (8bitsf.SF2, Distortion_Guitar.sf2) are loaded.
+     * These are from the distortion/ folder and have internal latency.
+     */
+    public boolean isDistortionLoaded() {
+        return distortionLoaded;
+    }
+    
     private void initializeSynthesizer() {
         try {
             synthesizer = MidiSystem.getSynthesizer();

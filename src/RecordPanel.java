@@ -519,37 +519,24 @@ public class RecordPanel extends JPanel {
     
     /**
      * Get per-note SF2 latency compensation in beats.
-     * Returns 125ms worth of beats ONLY for:
-     * - Piano notes when Piano SF2 is 8bitsf.SF2 or contains "distortion"
-     * - Guitar notes when Guitar SF2 is Distortion_Guitar.sf2 or contains "8bit"
+     * Returns 125ms worth of beats for Piano/Guitar notes when distortion SF2s
+     * (8bitsf.SF2, Distortion_Guitar.sf2 from distortion/ folder) are loaded.
+     * These SF2 files have internal latency that needs compensation.
      */
     private double getNoteCompensationBeats(MidiNote note) {
         String type = note.getInstrumentType();
         SoundManager sm = SoundManager.getInstance();
         
-        // Check Piano notes against Piano SF2
-        if ("Piano".equals(type)) {
-            String sf2 = sm.getSelectedPianoSF2();
-            if (sf2 != null) {
-                String lower = sf2.toLowerCase();
-                if (lower.contains("8bit") || lower.contains("distortion")) {
-                    return 125.0 * bpm / 60000.0;
-                }
+        // Distortion SF2s from distortion/ folder have internal latency
+        // Compensation needed for Piano and Guitar when those SF2s are loaded
+        if ("Piano".equals(type) || "Guitar".equals(type)) {
+            if (sm.isDistortionLoaded()) {
+                // 125ms early trigger
+                return 125.0 * bpm / 60000.0;
             }
         }
         
-        // Check Guitar notes against Guitar SF2
-        if ("Guitar".equals(type)) {
-            String sf2 = sm.getSelectedGuitarSF2();
-            if (sf2 != null) {
-                String lower = sf2.toLowerCase();
-                if (lower.contains("8bit") || lower.contains("distortion")) {
-                    return 125.0 * bpm / 60000.0;
-                }
-            }
-        }
-        
-        // No compensation for drums or other SF2s
+        // No compensation for drums or when distortion SF2s not loaded
         return 0.0;
     }
     
