@@ -24,10 +24,12 @@ public class UndoRedoManager {
      * Save the current state before a manipulation action
      */
     public void saveState(List<DrawableElement> elements) {
-        // Copy all elements to preserve state
+        // Copy all elements to preserve state (preserving element IDs for MIDI reference)
         List<DrawableElement> clonedElements = new ArrayList<>();
         for (DrawableElement element : elements) {
-            clonedElements.add(element.copy());
+            DrawableElement copy = element.copy();
+            copy.setElementId(element.getElementId()); // Preserve ID for undo/redo
+            clonedElements.add(copy);
         }
         
         CanvasState state = new CanvasState(clonedElements);
@@ -53,11 +55,13 @@ public class UndoRedoManager {
             return;
         }
         
-        // Save current state to redo stack
+        // Save current state to redo stack (preserving element IDs)
         List<DrawableElement> currentElements = canvas.getElements();
         List<DrawableElement> clonedCurrent = new ArrayList<>();
         for (DrawableElement element : currentElements) {
-            clonedCurrent.add(element.copy());
+            DrawableElement copy = element.copy();
+            copy.setElementId(element.getElementId());
+            clonedCurrent.add(copy);
         }
         redoStack.add(new CanvasState(clonedCurrent));
         
@@ -74,11 +78,13 @@ public class UndoRedoManager {
             return;
         }
         
-        // Save current state to undo stack
+        // Save current state to undo stack (preserving element IDs)
         List<DrawableElement> currentElements = canvas.getElements();
         List<DrawableElement> clonedCurrent = new ArrayList<>();
         for (DrawableElement element : currentElements) {
-            clonedCurrent.add(element.copy());
+            DrawableElement copy = element.copy();
+            copy.setElementId(element.getElementId());
+            clonedCurrent.add(copy);
         }
         undoStack.add(new CanvasState(clonedCurrent));
         
