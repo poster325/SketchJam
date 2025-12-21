@@ -520,15 +520,20 @@ public class RecordPanel extends JPanel {
     
     /**
      * Get SF2 latency compensation in beats.
-     * Returns 125ms worth of beats for distortion SF2 files (from distortion/ folder).
+     * Returns 125ms worth of beats ONLY for specific SF2 files: 8bitsf.SF2, Distortion_Guitar.sf2
      * 125ms = 0.25 beats at 120 BPM, but we calculate based on current BPM.
      */
     private double getSF2CompensationBeats() {
-        // Check if distortion SF2s are loaded (8bitsf.SF2, Distortion_Guitar.sf2)
-        if (SoundManager.getInstance().isDistortionLoaded()) {
+        // Check if CURRENTLY SELECTED Piano/Guitar SF2 needs compensation
+        boolean needsComp = SoundManager.getInstance().needsLatencyCompensation();
+        if (needsComp) {
             // 125ms compensation converted to beats at current BPM
             // 125ms * (bpm / 60000) = beats
-            return 125.0 * bpm / 60000.0;
+            double comp = 125.0 * bpm / 60000.0;
+            String pianoSF2 = SoundManager.getInstance().getSelectedPianoSF2();
+            String guitarSF2 = SoundManager.getInstance().getSelectedGuitarSF2();
+            System.out.println("SF2 Compensation: " + comp + " beats (piano: " + pianoSF2 + ", guitar: " + guitarSF2 + ")");
+            return comp;
         }
         
         return 0.0;

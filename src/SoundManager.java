@@ -48,6 +48,10 @@ public class SoundManager {
     private int distortionGuitarProgram = -1;
     private boolean distortionLoaded = false;
     
+    // Currently selected SF2 filenames (for latency compensation check)
+    private String selectedPianoSF2 = null;
+    private String selectedGuitarSF2 = null;
+    
     // Note names matching ColorPalette order
     public static final String[] NOTE_NAMES = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     
@@ -72,11 +76,22 @@ public class SoundManager {
     }
     
     /**
-     * Check if distortion SF2 files (from distortion/ folder) are loaded
+     * Check if currently selected Piano or Guitar SF2 needs latency compensation.
+     * Returns true ONLY for specific SF2 files: 8bitsf.SF2, Distortion_Guitar.sf2
      */
-    public boolean isDistortionLoaded() {
-        return distortionLoaded;
+    public boolean needsLatencyCompensation() {
+        return needsCompensation(selectedPianoSF2) || needsCompensation(selectedGuitarSF2);
     }
+    
+    private boolean needsCompensation(String sf2Name) {
+        if (sf2Name == null) return false;
+        String lower = sf2Name.toLowerCase();
+        // Only these specific files need compensation
+        return lower.contains("8bit") || lower.contains("distortion");
+    }
+    
+    public String getSelectedPianoSF2() { return selectedPianoSF2; }
+    public String getSelectedGuitarSF2() { return selectedGuitarSF2; }
     
     private void initializeSynthesizer() {
         try {
@@ -456,6 +471,7 @@ public class SoundManager {
     public void setPianoSoundfont(String filename) {
         if (channels == null) return;
         
+        selectedPianoSF2 = filename; // Track selected SF2 for compensation check
         int program = loadAndFindProgram(filename, "piano");
         if (program >= 0) {
             channels[PIANO_CHANNEL].programChange(program);
@@ -469,6 +485,7 @@ public class SoundManager {
     public void setGuitarSoundfont(String filename) {
         if (channels == null) return;
         
+        selectedGuitarSF2 = filename; // Track selected SF2 for compensation check
         int program = loadAndFindProgram(filename, "guitar");
         if (program >= 0) {
             channels[GUITAR_CHANNEL].programChange(program);
