@@ -22,6 +22,10 @@ public interface DrawableElement {
     String getMappedValue(); // Returns what this element maps to (e.g., "high tom", "octave 3")
     DrawableElement copy(); // Use copy() instead of clone() to avoid conflicts with Object.clone()
     
+    // Unique identifier for tracking elements across recording/playback
+    String getElementId();
+    void setElementId(String id);
+    
     // Selection handle hit detection - handles on sides for separate width/height control
     int getHandleAtPoint(Point p); // Returns handle index or -1
     static final int HANDLE_NONE = -1;

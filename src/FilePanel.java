@@ -79,19 +79,19 @@ public class FilePanel extends JPanel {
     }
     
     private void loadIcons() {
+        File symbolsDir = ResourceLoader.getSymbolsDir();
         try {
-            newIcon = ImageIO.read(new File("symbols/new.png"));
+            newIcon = ImageIO.read(new File(symbolsDir, "new.png"));
         } catch (Exception e) { }
         try {
-            openIcon = ImageIO.read(new File("symbols/open.png"));
+            openIcon = ImageIO.read(new File(symbolsDir, "open.png"));
         } catch (Exception e) { }
         try {
-            saveIcon = ImageIO.read(new File("symbols/save.png"));
+            saveIcon = ImageIO.read(new File(symbolsDir, "save.png"));
         } catch (Exception e) { }
         try {
-            exportIcon = ImageIO.read(new File("symbols/export.png"));
+            exportIcon = ImageIO.read(new File(symbolsDir, "export.png"));
         } catch (Exception e) { }
-        System.out.println("Loaded file icons from symbols folder");
     }
     
     private void handleButtonClick(int buttonIndex) {

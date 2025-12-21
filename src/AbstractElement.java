@@ -1,4 +1,5 @@
 import java.awt.*;
+import java.util.UUID;
 
 /**
  * Base abstract class for all drawable elements
@@ -10,6 +11,7 @@ public abstract class AbstractElement implements DrawableElement {
     protected Color color;
     protected int rotation = 0; // 0, 90, 180, 270
     protected float opacity = 1.0f; // 0.0 to 1.0, maps to volume
+    protected String elementId; // Unique identifier for tracking
     
     public AbstractElement(int x, int y, int width, int height, Color color) {
         this.x = x;
@@ -17,6 +19,17 @@ public abstract class AbstractElement implements DrawableElement {
         this.width = width;
         this.height = height;
         this.color = color;
+        this.elementId = UUID.randomUUID().toString();
+    }
+    
+    @Override
+    public String getElementId() {
+        return elementId;
+    }
+    
+    @Override
+    public void setElementId(String id) {
+        this.elementId = id;
     }
     
     @Override

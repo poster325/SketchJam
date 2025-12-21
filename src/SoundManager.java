@@ -233,7 +233,7 @@ public class SoundManager {
     public float getTrebleGain() { return trebleGain; }
     
     private void loadAllSoundFonts() {
-        File soundfontsDir = new File("soundfonts");
+        File soundfontsDir = ResourceLoader.getSoundfontsDir();
         if (!soundfontsDir.exists() || !soundfontsDir.isDirectory()) {
             System.out.println("No soundfonts folder found, using default sounds");
             loadDefaultSoundbank();
@@ -286,7 +286,7 @@ public class SoundManager {
      * Other files = piano/pad distortion
      */
     private void loadDistortionSoundfonts() {
-        File distortionDir = new File("distortion");
+        File distortionDir = ResourceLoader.getDistortionDir();
         if (!distortionDir.exists() || !distortionDir.isDirectory()) {
             System.out.println("No distortion folder found - distortion mixing disabled");
             return;
@@ -475,7 +475,7 @@ public class SoundManager {
     public void setDrumsSoundfont(String filename) {
         if (filename != null) {
             try {
-                File sf2File = new File("soundfonts/" + filename);
+                File sf2File = new File(ResourceLoader.getSoundfontsDir(), filename);
                 if (sf2File.exists()) {
                     Soundbank soundbank = MidiSystem.getSoundbank(sf2File);
                     if (synthesizer.isSoundbankSupported(soundbank)) {
@@ -499,7 +499,7 @@ public class SoundManager {
         }
         
         try {
-            File sf2File = new File("soundfonts/" + filename);
+            File sf2File = new File(ResourceLoader.getSoundfontsDir(), filename);
             if (!sf2File.exists()) {
                 System.err.println("SF2 file not found: " + filename);
                 return -1;
@@ -1104,22 +1104,21 @@ public class SoundManager {
 
         switch (type) {
             case "Piano":
-                vel = Math.max(1, Math.min(127, (int)(volume * 127)));
+                // Use volume * 100 to match instrument mode (startPianoNote)
+                vel = Math.max(1, Math.min(127, (int)(volume * 100)));
                 dur = (durationMs > 0) ? durationMs : 500;
 
-                // event.colorRGB 필요 (없으면 record/save/load 쪽에 추가해야 함)
                 Color c = new Color(event.colorRGB, true);
-
                 playLayeredNote(PIANO_CHANNEL, midiNote, vel, dur, c);
                 break;
 
             case "Guitar":
-                // ✅ 여기서 기존 saturation 믹스를 태운다
                 int h = (event.heightPx > 0) ? event.heightPx : 200;
                 playGuitarMidiWithDuration(midiNote, color, volume, h);
                 break;
 
             case "Drum":
+            case "Snare":
             case "Snare Drum":
                 // ✅ drumKey를 그대로 사용 (여러 스네어/톰 지원 가능)
                 vel = Math.max(1, (int)(volume * 127));

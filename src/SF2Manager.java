@@ -68,7 +68,7 @@ public class SF2Manager extends JPanel {
         melodicSoundfonts.add("(Default)");
         drumSoundfonts.add("(Default)");
         
-        File soundfontsDir = new File("soundfonts");
+        File soundfontsDir = ResourceLoader.getSoundfontsDir();
         if (soundfontsDir.exists() && soundfontsDir.isDirectory()) {
             File[] sf2Files = soundfontsDir.listFiles((dir, name) -> 
                 name.toLowerCase().endsWith(".sf2") || name.toLowerCase().endsWith(".sf3"));
@@ -244,30 +244,38 @@ public class SF2Manager extends JPanel {
     public void setPiano(String filename) {
         refreshSoundfonts();
         int index = melodicSoundfonts.indexOf(filename);
-        if (index > 0) {
+        if (index >= 1) {
             pianoSelection = index;
-            SoundManager.getInstance().setPianoSoundfont(filename);
+        } else if (filename != null) {
+            // File not found in list, try to load it anyway
+            pianoSelection = 0; // Reset to default visually
         }
+        // Always try to set the soundfont in SoundManager
+        SoundManager.getInstance().setPianoSoundfont(filename);
         repaint();
     }
     
     public void setGuitar(String filename) {
         refreshSoundfonts();
         int index = melodicSoundfonts.indexOf(filename);
-        if (index > 0) {
+        if (index >= 1) {
             guitarSelection = index;
-            SoundManager.getInstance().setGuitarSoundfont(filename);
+        } else if (filename != null) {
+            guitarSelection = 0;
         }
+        SoundManager.getInstance().setGuitarSoundfont(filename);
         repaint();
     }
     
     public void setDrums(String filename) {
         refreshSoundfonts();
         int index = drumSoundfonts.indexOf(filename);
-        if (index > 0) {
+        if (index >= 1) {
             drumsSelection = index;
-            SoundManager.getInstance().setDrumsSoundfont(filename);
+        } else if (filename != null) {
+            drumsSelection = 0;
         }
+        SoundManager.getInstance().setDrumsSoundfont(filename);
         repaint();
     }
     

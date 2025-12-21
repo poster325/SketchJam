@@ -48,6 +48,9 @@ public class TrackManager {
 
         // 최대 트랙 도달 등으로 녹음이 자동 종료될 때
         void onRecordingAutoStopped(String reason);
+        
+        // Called when loop restarts (for metronome sync)
+        void onLoopRestart();
     }
     
     private int loopBeats = 16; // Default to 16 beats
@@ -120,7 +123,6 @@ public class TrackManager {
      */
     public void startRecording() {
         if (tracks.size() >= MAX_TRACKS) {
-            System.out.println("Maximum tracks reached");
             if (listener != null) {
                 listener.onRecordingAutoStopped("MAX_TRACKS_REACHED");
             }
@@ -150,7 +152,6 @@ public class TrackManager {
             setupLoopRecordingTimer();
         }
         
-        System.out.println("Recording started: " + currentRecordingTrack.getName());
         notifyTracksUpdated();
     }
     
@@ -170,8 +171,6 @@ public class TrackManager {
         
         // Also stop playback when recording stops
         stopPlayback();
-        
-        System.out.println("Recording stopped");
     }
     
     /**
@@ -189,16 +188,11 @@ public class TrackManager {
             }
             
             tracks.add(currentRecordingTrack);
-            System.out.println("Track finalized: " + currentRecordingTrack.getName() + 
-                " with " + currentRecordingTrack.getEventCount() + " events, duration: " + 
-                currentRecordingTrack.getDurationMs() + "ms");
             currentRecordingTrack = null;
             notifyTracksUpdated();
             
             // Mark project as having unsaved changes
             FileManager.getInstance().markUnsaved();
-        } else {
-            System.out.println("No track to finalize");
         }
     }
     
@@ -214,6 +208,11 @@ public class TrackManager {
             if (isRecording && isLooping) {
                 // Finalize current track and start new one
                 finalizeRecording();
+                
+                // Notify listener to reset metronome for sync
+                if (listener != null) {
+                    listener.onLoopRestart();
+                }
                 
                 // Start or restart playback to play all recorded tracks
                 if (!tracks.isEmpty()) {
@@ -275,7 +274,8 @@ public class TrackManager {
     public void recordEvent(String instrumentType,
         int midiNote, int drumKey,
         float velocity, int durationMs,
-        int colorRGB, int heightPx) {
+        int colorRGB, int heightPx, String elementId) {
+        
         if (!isRecording || currentRecordingTrack == null) return;
 
         long timestamp = System.currentTimeMillis() - recordingStartTime;
@@ -285,7 +285,8 @@ public class TrackManager {
             timestamp, instrumentType,
             midiNote, drumKey,
             velocity, durationMs,
-            colorRGB, heightPx
+            colorRGB, heightPx,
+            elementId
         );
         currentRecordingTrack.addEvent(event);
     }

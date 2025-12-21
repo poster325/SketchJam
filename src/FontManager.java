@@ -17,15 +17,17 @@ public class FontManager {
         if (initialized) return;
         
         try {
+            File fontsDir = ResourceLoader.getFontsDir();
+            
             // Load regular font
-            File regularFile = new File("fonts/Paperlogy-4Regular.ttf");
+            File regularFile = new File(fontsDir, "Paperlogy-4Regular.ttf");
             if (regularFile.exists()) {
                 regularFont = Font.createFont(Font.TRUETYPE_FONT, regularFile);
                 GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(regularFont);
             }
             
             // Load bold font
-            File boldFile = new File("fonts/Paperlogy-7Bold.ttf");
+            File boldFile = new File(fontsDir, "Paperlogy-7Bold.ttf");
             if (boldFile.exists()) {
                 boldFont = Font.createFont(Font.TRUETYPE_FONT, boldFile);
                 GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(boldFont);

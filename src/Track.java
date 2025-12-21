@@ -23,11 +23,20 @@ public class Track {
 
         public final int colorRGB;     // saturation 계산용
         public final int heightPx;     // 기타 링타임(또는 기타 톤 파라미터)용
+        
+        public final String elementId; // Reference to the source element for dynamic property lookup
 
         public NoteEvent(long timestampMs, String instrumentType,
             int midiNote, int drumKey,
             float velocity, int durationMs,
             int colorRGB, int heightPx) {
+            this(timestampMs, instrumentType, midiNote, drumKey, velocity, durationMs, colorRGB, heightPx, null);
+        }
+        
+        public NoteEvent(long timestampMs, String instrumentType,
+            int midiNote, int drumKey,
+            float velocity, int durationMs,
+            int colorRGB, int heightPx, String elementId) {
             this.timestampMs = timestampMs;
             this.instrumentType = instrumentType;
             this.midiNote = midiNote;
@@ -36,6 +45,7 @@ public class Track {
             this.durationMs = durationMs;
             this.colorRGB = colorRGB;
             this.heightPx = heightPx;
+            this.elementId = elementId;
         }
     }
     
@@ -128,7 +138,8 @@ public class Track {
                 e.velocity,
                 newDur,
                 e.colorRGB,
-                e.heightPx
+                e.heightPx,
+                e.elementId
             ));
         }
 

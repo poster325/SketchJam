@@ -21,6 +21,7 @@ public class FileManager {
     private ScaleSelector scaleSelector;
     private SF2Manager sf2Manager;
     private EQPanel eqPanel;
+    private MidiSequencerPanel midiPanel;
     
     private FileManager() {}
     
@@ -33,13 +34,15 @@ public class FileManager {
     
     public void setComponents(SketchCanvas canvas, RecordPanel recordPanel, 
                               ColorPalette colorPalette, ScaleSelector scaleSelector,
-                              SF2Manager sf2Manager, EQPanel eqPanel) {
+                              SF2Manager sf2Manager, EQPanel eqPanel,
+                              MidiSequencerPanel midiPanel) {
         this.canvas = canvas;
         this.recordPanel = recordPanel;
         this.colorPalette = colorPalette;
         this.scaleSelector = scaleSelector;
         this.sf2Manager = sf2Manager;
         this.eqPanel = eqPanel;
+        this.midiPanel = midiPanel;
     }
     
     public void markUnsaved() {
@@ -100,6 +103,10 @@ public class FileManager {
             recordPanel.getTrackManager().clearTracks();
             recordPanel.setBpm(120);
             recordPanel.setLoopBeats(16);
+            recordPanel.resetMidiTrackIndex();
+        }
+        if (midiPanel != null) {
+            midiPanel.getSequence().clear();
         }
         if (colorPalette != null) {
             colorPalette.clearSelection();
@@ -275,6 +282,13 @@ public class FileManager {
             data.drumsSoundfont = sf2Manager.getSelectedDrums();
         }
         
+        // Collect MIDI notes
+        if (midiPanel != null) {
+            for (MidiNote note : midiPanel.getSequence().getNotes()) {
+                data.midiNotes.add(new ProjectData.MidiNoteData(note));
+            }
+        }
+        
         return data;
     }
     
@@ -333,6 +347,20 @@ public class FileManager {
             if (data.pianoSoundfont != null) sf2Manager.setPiano(data.pianoSoundfont);
             if (data.guitarSoundfont != null) sf2Manager.setGuitar(data.guitarSoundfont);
             if (data.drumsSoundfont != null) sf2Manager.setDrums(data.drumsSoundfont);
+        }
+        
+        // Load MIDI notes
+        if (midiPanel != null) {
+            MidiSequence seq = midiPanel.getSequence();
+            seq.clear();
+            if (data.midiNotes != null) {
+                for (ProjectData.MidiNoteData noteData : data.midiNotes) {
+                    seq.addNote(noteData.toMidiNote());
+                }
+            }
+            // Sync settings
+            seq.setBpm(data.bpm);
+            seq.setLoopBeats(data.loopBeats);
         }
     }
     

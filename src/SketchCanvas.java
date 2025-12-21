@@ -31,6 +31,7 @@ public class SketchCanvas extends JPanel {
     private Color currentColor = Color.RED;
     private UndoRedoManager undoRedoManager;
     private RecordPanel recordPanel;
+    private MidiSequencerPanel midiSequencer;
     private List<DrawableElement> elements = new ArrayList<>();
     
     // Selection state (supports multiple selection)
@@ -49,12 +50,17 @@ public class SketchCanvas extends JPanel {
     private boolean isDuplicating = false; // Alt+drag to duplicate
     private Point elementStartPos = null;
     private Dimension elementStartSize = null;
+    private java.util.Map<DrawableElement, Point> multiSelectStartPositions = new java.util.HashMap<>();
     
     // Track the last element the mouse was over during drag (for re-entry detection)
     private DrawableElement lastElementDuringDrag = null;
     
     // Track currently held piano element for sustain behavior
     private DrawableElement heldPianoElement = null;
+    
+    // Track drag path for interpolation (fast drag detection)
+    private Point lastDragPoint = null;
+    private java.util.Set<DrawableElement> playedDuringThisDrag = new java.util.HashSet<>();
     
     // Glow effect tracking: element -> glow intensity (1.0 = full, 0.0 = none)
     private Map<DrawableElement, Float> glowingElements = new HashMap<>();
@@ -72,6 +78,11 @@ public class SketchCanvas extends JPanel {
     private boolean isSpacePressed = false;
     private boolean isPanning = false;
     private Point panStart = null;
+    
+    // Quasi-mode keys for scaling
+    private boolean isHeightScaleMode = false;  // 'S' key - height scaling
+    private boolean isWidthScaleMode = false;   // 'A' key - width scaling (guitar)
+    private boolean isCKeyPressed = false;      // 'C' key - select same color
     
     public SketchCanvas(UndoRedoManager undoRedoManager) {
         this.undoRedoManager = undoRedoManager;
@@ -151,7 +162,7 @@ public class SketchCanvas extends JPanel {
                         if (type.equals("Piano")) {
                             // Piano: Start sustain note (will stop on release)
                             String mapped = clicked.getMappedValue();
-                            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+                            int octave = safeParseIntFromMapped(mapped, "piano", 3) + 1;
                             SoundManager.getInstance().startPianoNote(clicked.getColor(), octave, clicked.getOpacity());
                             heldPianoElement = clicked;
                             triggerGlow(clicked);
@@ -159,7 +170,7 @@ public class SketchCanvas extends JPanel {
                         } else if (type.equals("Guitar")) {
                             // Guitar: Play with duration based on height
                             String mapped = clicked.getMappedValue();
-                            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+                            int octave = safeParseIntFromMapped(mapped, "guitar", 3);
                             int height = clicked.getBounds().height;
                             int durationMs = Math.max(100, height * 2);
                             SoundManager.getInstance().playGuitarWithDuration(clicked.getColor(), octave, clicked.getOpacity(), height);
@@ -177,6 +188,9 @@ public class SketchCanvas extends JPanel {
                     }
                     isPlayDragging = true;
                     dragStart = p;
+                    lastDragPoint = p;
+                    playedDuringThisDrag.clear();
+                    if (clicked != null) playedDuringThisDrag.add(clicked);
                     repaint();
                     return;
                 }
@@ -200,8 +214,61 @@ public class SketchCanvas extends JPanel {
                 // Check if clicking on an element to select it
                 DrawableElement clicked = getElementAt(p);
                 if (clicked != null && currentDrawMode == DrawMode.NONE) {
+                    // C+click: Select all elements with the same color
+                    if (isCKeyPressed) {
+                        selectedElements.clear();
+                        Color targetColor = clicked.getColor();
+                        for (DrawableElement elem : elements) {
+                            if (colorsMatch(elem.getColor(), targetColor)) {
+                                selectedElements.add(elem);
+                            }
+                        }
+                        selectedElement = clicked;
+                        multiSelectStartPositions.clear();
+                        for (DrawableElement elem : selectedElements) {
+                            multiSelectStartPositions.put(elem, elem.getPosition());
+                        }
+                        SoundManager.getInstance().playElement(clicked);
+                        repaint();
+                        return;
+                    }
+                    
+                    // Check if clicking on an element that's part of multi-selection
+                    if (selectedElements.contains(clicked) && selectedElements.size() > 1) {
+                        // Clicking on element in multi-selection - start dragging all
+                        undoRedoManager.saveState(elements);
+                        
+                        // Alt+click to duplicate all selected elements
+                        if (e.isAltDown()) {
+                            List<DrawableElement> duplicates = new ArrayList<>();
+                            for (DrawableElement elem : selectedElements) {
+                                DrawableElement dup = elem.copy();
+                                elements.add(dup);
+                                duplicates.add(dup);
+                            }
+                            selectedElements.clear();
+                            selectedElements.addAll(duplicates);
+                            selectedElement = duplicates.get(0);
+                            isDuplicating = true;
+                            notifyMidiSequencer();
+                        }
+                        
+                        // Store start positions for all selected elements
+                        multiSelectStartPositions.clear();
+                        for (DrawableElement elem : selectedElements) {
+                            multiSelectStartPositions.put(elem, elem.getPosition());
+                        }
+                        
+                        isDragging = true;
+                        dragStart = p;
+                        SoundManager.getInstance().playElement(clicked);
+                        repaint();
+                        return;
+                    }
+                    
                     // Clear multiple selection and select single element
                     selectedElements.clear();
+                    multiSelectStartPositions.clear();
                     
                     // Alt+click to duplicate
                     if (e.isAltDown()) {
@@ -210,6 +277,7 @@ public class SketchCanvas extends JPanel {
                         elements.add(duplicate);
                         selectedElement = duplicate;
                         isDuplicating = true;
+                        notifyMidiSequencer();
                     } else {
                         selectedElement = clicked;
                         undoRedoManager.saveState(elements);
@@ -218,6 +286,7 @@ public class SketchCanvas extends JPanel {
                     isDragging = true;
                     dragStart = p;
                     elementStartPos = selectedElement.getPosition();
+                    elementStartSize = selectedElement.getSize();
                     SoundManager.getInstance().playElement(selectedElement);
                     repaint();
                     return;
@@ -277,6 +346,7 @@ public class SketchCanvas extends JPanel {
                         elements.add(newElement);
                         selectedElement = newElement;
                         selectedElements.clear();
+                        notifyMidiSequencer();
                     }
                     currentDrawMode = DrawMode.NONE;
                 }
@@ -312,6 +382,7 @@ public class SketchCanvas extends JPanel {
                 dragCurrent = null;
                 elementStartPos = null;
                 elementStartSize = null;
+                multiSelectStartPositions.clear();
                 repaint();
             }
         });
@@ -334,36 +405,42 @@ public class SketchCanvas extends JPanel {
                 
                 // PLAY MODE: Different drag behavior for each instrument
                 if (interactionMode == InteractionMode.PLAY && isPlayDragging) {
-                    DrawableElement elementAtPoint = getElementAt(p);
+                    // Check all elements along the drag path (interpolate to catch fast drags)
+                    java.util.List<DrawableElement> elementsInPath = getElementsAlongPath(lastDragPoint, p);
+                    lastDragPoint = p;
                     
-                    // If holding a piano and moved off it, stop the note
+                    // If holding a piano and moved off it, check if still on it
+                    DrawableElement elementAtPoint = getElementAt(p);
                     if (heldPianoElement != null && elementAtPoint != heldPianoElement) {
                         SoundManager.getInstance().stopPianoNote();
                         heldPianoElement = null;
                     }
                     
-                    // Check if entering a new element
-                    if (elementAtPoint != null && elementAtPoint != lastElementDuringDrag) {
-                        String type = elementAtPoint.getElementType();
-                        
-                        if (type.equals("Guitar")) {
-                            // Guitar: Drag-to-play with duration based on height
-                            String mapped = elementAtPoint.getMappedValue();
-                            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
-                            int height = elementAtPoint.getBounds().height;
-                            SoundManager.getInstance().playGuitarWithDuration(elementAtPoint.getColor(), octave, elementAtPoint.getOpacity(), height);
-                            triggerGlow(elementAtPoint);
-                        } else if (type.equals("Piano")) {
-                            // Piano: Start sustain on entry
-                            String mapped = elementAtPoint.getMappedValue();
-                            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
-                            SoundManager.getInstance().startPianoNote(elementAtPoint.getColor(), octave, elementAtPoint.getOpacity());
-                            heldPianoElement = elementAtPoint;
-                            triggerGlow(elementAtPoint);
-                        } else {
-                            // Drums/Snare: Play on entry
-                            SoundManager.getInstance().playElement(elementAtPoint);
-                            triggerGlow(elementAtPoint);
+                    // Process all elements hit during the drag
+                    for (DrawableElement element : elementsInPath) {
+                        if (element != null && !playedDuringThisDrag.contains(element)) {
+                            playedDuringThisDrag.add(element);
+                            String type = element.getElementType();
+                            
+                            if (type.equals("Guitar")) {
+                                String mapped = element.getMappedValue();
+                                int octave = safeParseIntFromMapped(mapped, "guitar", 3);
+                                int height = element.getBounds().height;
+                                SoundManager.getInstance().playGuitarWithDuration(element.getColor(), octave, element.getOpacity(), height);
+                                triggerGlow(element);
+                                recordElement(element, height * 2);
+                            } else if (type.equals("Piano")) {
+                                String mapped = element.getMappedValue();
+                                int octave = safeParseIntFromMapped(mapped, "piano", 3) + 1;
+                                SoundManager.getInstance().startPianoNote(element.getColor(), octave, element.getOpacity());
+                                heldPianoElement = element;
+                                triggerGlow(element);
+                                recordElement(element, 500);
+                            } else {
+                                SoundManager.getInstance().playElement(element);
+                                triggerGlow(element);
+                                recordElement(element, 100);
+                            }
                         }
                     }
                     
@@ -373,9 +450,13 @@ public class SketchCanvas extends JPanel {
                 }
                 
                 // OBJECT MODE dragging
-                if (isResizing && selectedElement != null) {
+                
+                // Quasi-mode scaling with S or A keys
+                if ((isHeightScaleMode || isWidthScaleMode) && selectedElement != null && dragStart != null) {
+                    handleQuasiModeScaling(p);
+                } else if (isResizing && selectedElement != null) {
                     handleResize(p);
-                } else if (isDragging && selectedElement != null) {
+                } else if (isDragging && (selectedElement != null || !multiSelectStartPositions.isEmpty())) {
                     handleDrag(p);
                 } else if (isDrawing) {
                     dragCurrent = snapToGrid(p);
@@ -388,15 +469,70 @@ public class SketchCanvas extends JPanel {
     }
     
     private void handleDrag(Point current) {
-        if (dragStart == null || elementStartPos == null) return;
+        if (dragStart == null) return;
         
         int dx = current.x - dragStart.x;
         int dy = current.y - dragStart.y;
+        
+        // Handle multi-selection drag
+        if (!multiSelectStartPositions.isEmpty()) {
+            for (java.util.Map.Entry<DrawableElement, Point> entry : multiSelectStartPositions.entrySet()) {
+                DrawableElement elem = entry.getKey();
+                Point startPos = entry.getValue();
+                int newX = snapValue(startPos.x + dx);
+                int newY = snapValue(startPos.y + dy);
+                elem.setPosition(newX, newY);
+            }
+            return;
+        }
+        
+        // Handle single element drag
+        if (elementStartPos == null) return;
         
         int newX = snapValue(elementStartPos.x + dx);
         int newY = snapValue(elementStartPos.y + dy);
         
         selectedElement.setPosition(newX, newY);
+    }
+    
+    /**
+     * Handle quasi-mode scaling with S (height) or A (width) keys
+     */
+    private void handleQuasiModeScaling(Point current) {
+        if (selectedElement == null || elementStartSize == null) return;
+        
+        int dy = current.y - dragStart.y;
+        int dx = current.x - dragStart.x;
+        
+        String type = selectedElement.getElementType();
+        
+        if (isHeightScaleMode) {
+            // S key: Scale height (all instruments)
+            int newHeight = Math.max(GRID_SIZE, elementStartSize.height + dy);
+            
+            if ("Piano".equals(type)) {
+                // Piano: height determines octave (100-500 range, snaps to 100)
+                selectedElement.setSize(PianoElement.FIXED_WIDTH, newHeight);
+            } else if ("Guitar".equals(type)) {
+                // Guitar: height determines ring time (100-500 range, snaps to 25)
+                selectedElement.setSize(elementStartSize.width, newHeight);
+            } else if ("Drum".equals(type)) {
+                // Drum: size (100-200, snaps to 100/125/150/200)
+                selectedElement.setSize(newHeight, newHeight);
+            } else if ("Snare Drum".equals(type)) {
+                // Snare: size (100-150, snaps to 100/150)
+                selectedElement.setSize(newHeight, newHeight);
+            }
+        }
+        
+        if (isWidthScaleMode && "Guitar".equals(type)) {
+            // A key: Scale width (guitar only - string thickness)
+            // Width snaps to: 5, 10, 15, 20, 25 (octaves 5-1)
+            int newWidth = Math.max(5, elementStartSize.width + dx);
+            selectedElement.setSize(newWidth, elementStartSize.height);
+        }
+        
+        repaint();
     }
     
     private void handleResize(Point current) {
@@ -546,6 +682,42 @@ public class SketchCanvas extends JPanel {
         return null;
     }
     
+    /**
+     * Get all elements along a line path (for fast drag detection)
+     * Uses Bresenham-style sampling to catch elements between mouse events
+     */
+    private java.util.List<DrawableElement> getElementsAlongPath(Point from, Point to) {
+        java.util.List<DrawableElement> result = new java.util.ArrayList<>();
+        if (from == null || to == null) {
+            DrawableElement atTo = getElementAt(to);
+            if (atTo != null) result.add(atTo);
+            return result;
+        }
+        
+        // Calculate distance and number of samples
+        int dx = to.x - from.x;
+        int dy = to.y - from.y;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Sample every 5 pixels along the path
+        int samples = Math.max(1, (int)(distance / 5));
+        
+        java.util.Set<DrawableElement> seen = new java.util.HashSet<>();
+        for (int i = 0; i <= samples; i++) {
+            double t = (double)i / samples;
+            int x = (int)(from.x + dx * t);
+            int y = (int)(from.y + dy * t);
+            
+            DrawableElement element = getElementAt(new Point(x, y));
+            if (element != null && !seen.contains(element)) {
+                seen.add(element);
+                result.add(element);
+            }
+        }
+        
+        return result;
+    }
+    
     private Rectangle getMarqueeRect() {
         if (dragStart == null || dragCurrent == null) return null;
         int x = Math.min(dragStart.x, dragCurrent.x);
@@ -685,11 +857,13 @@ public class SketchCanvas extends JPanel {
                     elements.removeAll(selectedElements);
                     selectedElements.clear();
                     selectedElement = null;
+                    notifyMidiSequencer();
                     repaint();
                 } else if (selectedElement != null) {
                     undoRedoManager.saveState(elements);
                     elements.remove(selectedElement);
                     selectedElement = null;
+                    notifyMidiSequencer();
                     repaint();
                 }
             }
@@ -823,41 +997,108 @@ public class SketchCanvas extends JPanel {
             }
         });
         
-        // T - Trigger play on element under mouse (in Instrument/Play mode only)
-        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_T, 0, false), "triggerPlay");
-        getActionMap().put("triggerPlay", new AbstractAction() {
+        // 'S' pressed - enable height scaling mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_S, 0, false), "sPressed");
+        getActionMap().put("sPressed", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (interactionMode != InteractionMode.PLAY) return;
-                
-                // Get mouse position and find element under it
-                Point mousePos = getMousePosition();
-                if (mousePos == null) return;
-                
-                Point canvasPos = screenToCanvas(mousePos);
-                DrawableElement element = getElementAt(canvasPos);
-                
-                if (element != null) {
-                    playElementByType(element);
-                    triggerGlow(element);
+                if (interactionMode == InteractionMode.OBJECT) {
+                    isHeightScaleMode = true;
+                    setCursor(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
                 }
             }
         });
         
-        // T released - stop piano note if held
-        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_T, 0, true), "triggerPlayReleased");
-        getActionMap().put("triggerPlayReleased", new AbstractAction() {
+        // 'S' released - disable height scaling mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_S, 0, true), "sReleased");
+        getActionMap().put("sReleased", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                if (interactionMode != InteractionMode.PLAY) return;
-                
-                // Stop any held piano note
-                if (heldPianoElement != null) {
-                    SoundManager.getInstance().stopPianoNote();
-                    heldPianoElement = null;
+                isHeightScaleMode = false;
+                setCursor(Cursor.getDefaultCursor());
+            }
+        });
+        
+        // 'A' pressed - enable width scaling mode (for guitar)
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_A, 0, false), "aPressed");
+        getActionMap().put("aPressed", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (interactionMode == InteractionMode.OBJECT) {
+                    isWidthScaleMode = true;
+                    setCursor(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR));
                 }
             }
         });
+        
+        // 'A' released - disable width scaling mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_A, 0, true), "aReleased");
+        getActionMap().put("aReleased", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isWidthScaleMode = false;
+                setCursor(Cursor.getDefaultCursor());
+            }
+        });
+        
+        // 'C' pressed - enable select same color mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_C, 0, false), "cPressed");
+        getActionMap().put("cPressed", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isCKeyPressed = true;
+            }
+        });
+        
+        // 'C' released - disable select same color mode
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_C, 0, true), "cReleased");
+        getActionMap().put("cReleased", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                isCKeyPressed = false;
+            }
+        });
+        
+        // T, Y, U, I - Trigger play on element under mouse (in Instrument/Play mode only)
+        // All four keys work as mouse clicks for better keyboard playing experience
+        int[] triggerKeys = {KeyEvent.VK_T, KeyEvent.VK_Y, KeyEvent.VK_U, KeyEvent.VK_I};
+        for (int key : triggerKeys) {
+            String keyName = KeyEvent.getKeyText(key);
+            getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key, 0, false), "triggerPlay" + keyName);
+            getActionMap().put("triggerPlay" + keyName, new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    if (interactionMode != InteractionMode.PLAY) return;
+                    
+                    // Get mouse position and find element under it
+                    Point mousePos = getMousePosition();
+                    if (mousePos == null) return;
+                    
+                    Point canvasPos = screenToCanvas(mousePos);
+                    DrawableElement element = getElementAt(canvasPos);
+                    
+                    if (element != null) {
+                        playElementByType(element);
+                        triggerGlow(element);
+                    }
+                }
+            });
+            
+            // Key released - stop piano note if held
+            getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key, 0, true), "triggerPlayReleased" + keyName);
+            getActionMap().put("triggerPlayReleased" + keyName, new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    if (interactionMode != InteractionMode.PLAY) return;
+                    
+                    // Stop any held piano note
+                    if (heldPianoElement != null) {
+                        SoundManager.getInstance().stopPianoNote();
+                        heldPianoElement = null;
+                    }
+                }
+            });
+        }
     }
     
     /**
@@ -869,14 +1110,14 @@ public class SketchCanvas extends JPanel {
         if (type.equals("Piano")) {
             // Piano: Start sustain
             String mapped = element.getMappedValue();
-            int octave = Integer.parseInt(mapped.split(" ")[1]) + 1;
+            int octave = safeParseIntFromMapped(mapped, "piano", 3) + 1;
             SoundManager.getInstance().startPianoNote(element.getColor(), octave, element.getOpacity());
             heldPianoElement = element;
             recordElement(element, 0);
         } else if (type.equals("Guitar")) {
             // Guitar: Play with duration based on height
             String mapped = element.getMappedValue();
-            int octave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+            int octave = safeParseIntFromMapped(mapped, "guitar", 3);
             int height = element.getBounds().height;
             SoundManager.getInstance().playGuitarWithDuration(element.getColor(), octave, element.getOpacity(), height);
             recordElement(element, height * 2);
@@ -945,6 +1186,19 @@ public class SketchCanvas extends JPanel {
     
     public void setRecordPanel(RecordPanel recordPanel) {
         this.recordPanel = recordPanel;
+    }
+    
+    public void setMidiSequencer(MidiSequencerPanel midiSequencer) {
+        this.midiSequencer = midiSequencer;
+    }
+    
+    /**
+     * Notify MIDI sequencer that elements have changed
+     */
+    private void notifyMidiSequencer() {
+        if (midiSequencer != null) {
+            midiSequencer.refreshFromCanvas();
+        }
     }
     
     /**
@@ -1107,72 +1361,47 @@ public class SketchCanvas extends JPanel {
     private void recordElement(DrawableElement element, int durationMs) {
         if (recordPanel == null || !recordPanel.isRecording()) return;
 
-        TrackManager tm = recordPanel.getTrackManager();
-        if (tm == null) return;
-
         String type = element.getElementType();
         float velocity = element.getOpacity();
-
-        // ✅ 톤(saturation) 재현을 위해 "색"을 반드시 저장
+        String elementId = element.getElementId();
         int colorRGB = element.getColor().getRGB();
-
-        // 기본값
         int midiNote = 0;
         int drumKey = 0;
         int heightPx = 0;
 
         if ("Piano".equals(type)) {
-            // 실시간 재생 규칙과 동일하게 octave 추출
-            // playElement(): int pianoOctave = Integer.parseInt(mapped.split(" ")[1]); playPiano(color, pianoOctave + 1, volume);
             String mapped = element.getMappedValue();
-
-            int octaveParam = safeParseIntFromMapped(mapped, "piano", 0) + 1; // playPiano에 들어가는 octave 값
+            int octaveParam = safeParseIntFromMapped(mapped, "piano", 0) + 1;
             int noteIndex = getNoteIndexFromColor(element.getColor());
-
-            // ✅ MIDI: (octave + 1) * 12 + noteIndex (C4=60이 되도록)
             midiNote = (octaveParam + 1) * 12 + noteIndex;
-
-            // 피아노는 height 의미 없음
             heightPx = 0;
-
-            // durationMs는 호출자가 넘긴 값 사용 (너는 "이걸로 할래"라 했으니)
-            tm.recordEvent("Piano", midiNote, 0, velocity, durationMs, colorRGB, heightPx);
-            return;
-        }
-
-        if ("Guitar".equals(type)) {
-            // playElement(): int guitarOctave = Integer.parseInt(mapped.split(",")[0].split(" ")[1]); playGuitar(color, guitarOctave, volume);
+        } else if ("Guitar".equals(type)) {
             String mapped = element.getMappedValue();
-
-            int octaveParam = safeParseIntFromMapped(mapped, "guitar", 0); // playGuitarWithDuration에 들어가는 octave 값
+            int octaveParam = safeParseIntFromMapped(mapped, "guitar", 0);
             int noteIndex = getNoteIndexFromColor(element.getColor());
-
-            // ✅ 실시간 toMidiNote(noteIndex, octave)와 동일 규칙으로 맞춤
             midiNote = (octaveParam + 1) * 12 + noteIndex;
-
-            // ✅ 기타는 height 기반 링타임/톤이 있으니 저장
             heightPx = element.getBounds().height;
-
-            tm.recordEvent("Guitar", midiNote, 0, velocity, durationMs, colorRGB, heightPx);
-            return;
-        }
-
-        if ("Drum".equals(type)) {
-            // 실시간: playDrum(mapped, volume)
+        } else if ("Drum".equals(type)) {
             String mapped = element.getMappedValue();
             drumKey = mapDrumToMidi(mapped);
-
-            // 드럼은 midiNote 대신 drumKey를 사용
-            tm.recordEvent("Drum", 0, drumKey, velocity, durationMs, colorRGB, 0);
+            type = "Drum";
+        } else if ("Snare Drum".equals(type)) {
+            String mapped = element.getMappedValue();
+            drumKey = mapSnareToMidi(mapped);
+            type = "Snare";
+        } else {
             return;
         }
 
-        if ("Snare Drum".equals(type)) {
-            // 실시간: playSnare(mapped, volume)
-            String mapped = element.getMappedValue();
-            drumKey = mapSnareToMidi(mapped);
-
-            tm.recordEvent("Snare Drum", 0, drumKey, velocity, durationMs, colorRGB, 0);
+        // Record to MIDI sequencer if recording to MIDI
+        if (recordPanel.isRecordingToMidi()) {
+            recordPanel.recordMidiNote(type, midiNote, drumKey, velocity, durationMs, colorRGB, heightPx, elementId);
+        } else {
+            // Legacy: Record to TrackManager
+            TrackManager tm = recordPanel.getTrackManager();
+            if (tm != null) {
+                tm.recordEvent(type, midiNote, drumKey, velocity, durationMs, colorRGB, heightPx, elementId);
+            }
         }
     }
     
@@ -1181,6 +1410,16 @@ public class SketchCanvas extends JPanel {
         float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
         // Map hue (0-1) to note index (0-11)
         return (int)(hsb[0] * 12) % 12;
+    }
+    
+    /**
+     * Check if two colors match (same RGB values)
+     */
+    private boolean colorsMatch(Color c1, Color c2) {
+        if (c1 == null || c2 == null) return false;
+        return c1.getRed() == c2.getRed() && 
+               c1.getGreen() == c2.getGreen() && 
+               c1.getBlue() == c2.getBlue();
     }
     
     private int getOctaveFromElement(DrawableElement element) {
@@ -1200,6 +1439,19 @@ public class SketchCanvas extends JPanel {
         return selectedElement;
     }
     
+    /**
+     * Find an element by its unique ID
+     */
+    public DrawableElement getElementById(String elementId) {
+        if (elementId == null) return null;
+        for (DrawableElement element : elements) {
+            if (elementId.equals(element.getElementId())) {
+                return element;
+            }
+        }
+        return null;
+    }
+    
     public DrawMode getCurrentMode() {
         return currentDrawMode;
     }
@@ -1212,11 +1464,13 @@ public class SketchCanvas extends JPanel {
         elements.clear();
         selectedElement = null;
         selectedElements.clear();
+        notifyMidiSequencer();
         repaint();
     }
     
     public void addElement(DrawableElement element) {
         elements.add(element);
+        notifyMidiSequencer();
         repaint();
     }
     
@@ -1225,6 +1479,7 @@ public class SketchCanvas extends JPanel {
         // Clear selection state when elements are restored (undo/redo)
         selectedElement = null;
         selectedElements.clear();
+        notifyMidiSequencer();
         repaint();
     }
     
@@ -1295,7 +1550,8 @@ public class SketchCanvas extends JPanel {
             String zoomText = (int)(zoomLevel * 100) + "%";
             g2d.setFont(FontManager.getRegular(12));
             g2d.setColor(new Color(0, 0, 0, 180));
-            int y = 75 + 25; // Below mode indicator
+            // Position at bottom left of canvas
+            int y = getHeight() - 25;
             g2d.fillRect(0, y, 75, 25);
             g2d.setColor(Color.WHITE);
             g2d.drawString(zoomText, 10, y + 17);

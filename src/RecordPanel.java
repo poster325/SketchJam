@@ -47,6 +47,11 @@ public class RecordPanel extends JPanel {
     // Track management
     private TrackManager trackManager;
     
+    // MIDI sequencer
+    private MidiSequencerPanel midiSequencer;
+    private Timer playheadTimer;
+    private boolean isMidiPlaying = false;
+    
     // Button states
     private int hoveredButton = -1; // 0=play, 1=record, 2=loop
     private int hoveredTrack = -1;
@@ -71,8 +76,30 @@ public class RecordPanel extends JPanel {
             
             @Override
             public void onPlayNote(Track.NoteEvent event) {
-                // Play the note through SoundManager
-                SoundManager.getInstance().playNoteEvent(event);
+                // Look up element by ID to use current properties
+                Track.NoteEvent playEvent = event;
+                if (event.elementId != null && canvas != null) {
+                    DrawableElement element = canvas.getElementById(event.elementId);
+                    if (element != null) {
+                        // Use current element properties
+                        int currentColorRGB = element.getColor().getRGB();
+                        float currentVelocity = element.getOpacity();
+                        int currentHeight = element.getBounds().height;
+                        
+                        playEvent = new Track.NoteEvent(
+                            event.timestampMs,
+                            event.instrumentType,
+                            event.midiNote,
+                            event.drumKey,
+                            currentVelocity,
+                            event.durationMs,
+                            currentColorRGB,
+                            currentHeight,
+                            event.elementId
+                        );
+                    }
+                }
+                SoundManager.getInstance().playNoteEvent(playEvent);
             }
 
             @Override
@@ -88,6 +115,13 @@ public class RecordPanel extends JPanel {
 
                 repaint();
                 System.out.println("Recording auto-stopped: " + reason);
+            }
+            
+            @Override
+            public void onLoopRestart() {
+                // Reset metronome to downbeat when loop restarts
+                resetMetronomeToDownbeat();
+                System.out.println("Loop restart: metronome synced to downbeat");
             }
         });
         
@@ -236,7 +270,8 @@ public class RecordPanel extends JPanel {
     private void handleButtonClick(int buttonIndex) {
         switch (buttonIndex) {
             case 0: // Play
-                if (!trackManager.isPlaying()) {
+                // Check both TrackManager playing AND MIDI playing
+                if (!trackManager.isPlaying() && !isMidiPlaying) {
                     startPlaying();
                 } else {
                     stopPlaying();
@@ -248,7 +283,8 @@ public class RecordPanel extends JPanel {
                     cancelCountIn();
                     break;
                 }
-                if (!trackManager.isRecording()) {
+                // Check both TrackManager recording AND MIDI recording
+                if (!trackManager.isRecording() && !isRecordingToMidi) {
                     startRecording();
                 } else {
                     stopRecording();
@@ -281,11 +317,17 @@ public class RecordPanel extends JPanel {
     private void toggleLoop() {
         loopEnabled = !loopEnabled;
         trackManager.setLooping(loopEnabled);
+        if (midiSequencer != null) {
+            midiSequencer.getSequence().setLooping(loopEnabled);
+        }
     }
     
     private void updateLoopBeats() {
         int beats = BEAT_OPTIONS[selectedBeatIndex];
         trackManager.setLoopBeats(beats);
+        if (midiSequencer != null) {
+            midiSequencer.getSequence().setLoopBeats(beats);
+        }
         System.out.println("Loop beats set to: " + beats);
     }
     
@@ -294,7 +336,12 @@ public class RecordPanel extends JPanel {
     }
     
     private void startPlaying() {
-        trackManager.startPlayback();
+        // Use MIDI sequence for playback instead of TrackManager
+        if (midiSequencer != null) {
+            startMidiPlayback();
+        } else {
+            trackManager.startPlayback();
+        }
         // Switch to instrument/preview mode
         if (canvas != null) {
             canvas.setInteractionMode(SketchCanvas.InteractionMode.PLAY);
@@ -304,6 +351,7 @@ public class RecordPanel extends JPanel {
     }
     
     private void stopPlaying() {
+        stopMidiPlayback();
         trackManager.stopPlayback();
         // Return to edit mode
         if (canvas != null) {
@@ -313,13 +361,207 @@ public class RecordPanel extends JPanel {
         System.out.println("Preview mode stopped");
     }
     
+    private long playbackStartTime;
+    private double lastPlayedBeat = -1;
+    
+    private void startMidiPlayback() {
+        if (midiSequencer == null) return;
+        
+        isMidiPlaying = true;
+        MidiSequence seq = midiSequencer.getSequence();
+        midiSequencer.setPlaying(true);
+        playbackStartTime = System.currentTimeMillis();
+        lastPlayedBeat = -1;
+        
+        // Start playhead timer (5ms for tighter timing)
+        if (playheadTimer != null) playheadTimer.stop();
+        playheadTimer = new Timer(5, e -> {
+            long elapsed = System.currentTimeMillis() - playbackStartTime;
+            double currentBeat = (elapsed * bpm) / 60000.0;
+            
+            // Loop handling
+            if (loopEnabled && seq.getLoopBeats() > 0) {
+                if (currentBeat >= seq.getLoopBeats()) {
+                    playbackStartTime = System.currentTimeMillis();
+                    currentBeat = 0;
+                    lastPlayedBeat = -1;
+                }
+            }
+            
+            // Play notes FIRST (before updating visual playhead)
+            for (MidiNote note : seq.getNotes()) {
+                double noteStart = note.getStartBeat();
+                String type = note.getInstrumentType();
+                
+                // Compensate for audio latency: Piano and Guitar need 0.25 beat early trigger
+                double effectiveStart = noteStart;
+                if ("Piano".equals(type) || "Guitar".equals(type)) {
+                    effectiveStart = noteStart - 0.25;
+                }
+                
+                if (effectiveStart > lastPlayedBeat && effectiveStart <= currentBeat) {
+                    playMidiNote(note);
+                }
+            }
+            
+            lastPlayedBeat = currentBeat;
+            
+            // Update playhead visual AFTER playing notes
+            midiSequencer.setPlayheadBeat(currentBeat);
+        });
+        playheadTimer.start();
+    }
+    
+    private void stopMidiPlayback() {
+        isMidiPlaying = false;
+        if (playheadTimer != null) {
+            playheadTimer.stop();
+            playheadTimer = null;
+        }
+        if (midiSequencer != null) {
+            midiSequencer.setPlaying(false);
+            midiSequencer.setPlayheadBeat(0);
+        }
+    }
+    
+    private void playMidiNote(MidiNote note) {
+        // Default to stored values
+        int colorRGB = note.getColorRGB();
+        int heightPx = note.getHeightPx();
+        float velocity = note.getVelocity();
+        int midiNoteNum = note.getMidiNote();
+        int drumKey = note.getDrumKey();
+        String instrumentType = note.getInstrumentType();
+        
+        // Look up element by ID to use CURRENT properties (reflects element edits)
+        if (note.getElementId() != null && canvas != null) {
+            DrawableElement element = canvas.getElementById(note.getElementId());
+            if (element != null) {
+                // Update from current element state
+                colorRGB = element.getColor().getRGB();
+                velocity = element.getOpacity();
+                heightPx = element.getBounds().height;
+                
+                // Recalculate midiNote based on current color for Piano/Guitar
+                if ("Piano".equals(instrumentType) || "Guitar".equals(instrumentType)) {
+                    Color color = element.getColor();
+                    int noteIndex = getNoteIndexFromColor(color);
+                    String mapped = element.getMappedValue();
+                    int octave = parseOctaveFromMapped(mapped, instrumentType);
+                    midiNoteNum = (octave + 1) * 12 + noteIndex;
+                }
+                
+                // For drums, recalculate drumKey based on current size
+                if ("Drum".equals(instrumentType) || "Snare".equals(instrumentType)) {
+                    String mapped = element.getMappedValue();
+                    if ("Drum".equals(instrumentType)) {
+                        drumKey = mapDrumToMidi(mapped);
+                    } else {
+                        drumKey = mapSnareToMidi(mapped);
+                    }
+                }
+            }
+        }
+        
+        // Use note duration from MIDI sequencer (respects user edits)
+        int durationMs = note.getDurationMs(bpm);
+        // Minimum duration to ensure sound plays
+        if (durationMs < 100) durationMs = 100;
+        
+        // Create a NoteEvent for playback
+        Track.NoteEvent event = new Track.NoteEvent(
+            note.getStartMs(bpm),
+            instrumentType,
+            midiNoteNum,
+            drumKey,
+            velocity,
+            durationMs,
+            colorRGB,
+            heightPx,
+            note.getElementId()
+        );
+        
+        SoundManager.getInstance().playNoteEvent(event);
+    }
+    
+    // Helper methods for recalculating note properties from current element state
+    private int getNoteIndexFromColor(Color color) {
+        float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
+        return (int)(hsb[0] * 12) % 12;
+    }
+    
+    private int parseOctaveFromMapped(String mapped, String instrumentType) {
+        try {
+            if ("Piano".equals(instrumentType)) {
+                // Format: "Octave X" - add 1 to match instrument mode calculation
+                return Integer.parseInt(mapped.split(" ")[1]) + 1;
+            } else if ("Guitar".equals(instrumentType)) {
+                // Format: "Octave X, Duration Y"
+                return Integer.parseInt(mapped.split(",")[0].split(" ")[1]);
+            }
+        } catch (Exception e) {
+            // Default octave
+        }
+        return 3;
+    }
+    
+    private int mapDrumToMidi(String drumType) {
+        return switch (drumType) {
+            case "High Tom" -> 50;
+            case "Mid Tom" -> 47;
+            case "Floor Tom" -> 43;
+            case "Bass Drum" -> 36;
+            default -> 36;
+        };
+    }
+    
+    private int mapSnareToMidi(String snareType) {
+        return switch (snareType) {
+            case "Rim Shot" -> 37;
+            case "Middle Shot" -> 38;
+            default -> 38;
+        };
+    }
+    
     private boolean isCountingIn = false;
     private Timer countInTimer;
+    
+    private boolean isRecordingToMidi = false;
+    private long recordingStartTime;
+    private int currentMidiTrackIndex = 0;
+    
+    // Track colors (same as TrackManager)
+    private static final java.awt.Color[] TRACK_COLORS = {
+        new java.awt.Color(0x00, 0xBF, 0xFF), // Track 1 - Cyan/Blue
+        new java.awt.Color(0xFF, 0x00, 0x00), // Track 2 - Red
+        new java.awt.Color(0xFF, 0x8C, 0x00), // Track 3 - Orange
+        new java.awt.Color(0xFF, 0xD7, 0x00), // Track 4 - Gold/Yellow
+        new java.awt.Color(0x32, 0xCD, 0x32), // Track 5 - Lime Green
+        new java.awt.Color(0x00, 0xCE, 0xD1), // Track 6 - Dark Turquoise
+        new java.awt.Color(0x94, 0x00, 0xD3), // Track 7 - Dark Violet
+    };
     
     private void startRecording() {
         // Start 4-beat count-in before actual recording
         startCountIn(() -> {
-            trackManager.startRecording();
+            if (midiSequencer != null) {
+                // Use MIDI sequencer for recording
+                isRecordingToMidi = true;
+                recordingStartTime = System.currentTimeMillis();
+                
+                // Set track index to next available (after existing tracks)
+                MidiSequence seq = midiSequencer.getSequence();
+                int maxExisting = -1;
+                for (MidiNote note : seq.getNotes()) {
+                    maxExisting = Math.max(maxExisting, note.getTrackIndex());
+                }
+                currentMidiTrackIndex = maxExisting + 1;
+                
+                midiSequencer.setPlaying(true);
+                startMidiRecordingPlayback();
+            } else {
+                trackManager.startRecording();
+            }
             startMetronome(); // Metronome only in record mode
             // Switch to instrument/preview mode for recording
             if (canvas != null) {
@@ -328,6 +570,56 @@ public class RecordPanel extends JPanel {
             }
             System.out.println("Record mode started");
         });
+    }
+    
+    private void startMidiRecordingPlayback() {
+        if (midiSequencer == null) return;
+        
+        MidiSequence seq = midiSequencer.getSequence();
+        playbackStartTime = System.currentTimeMillis();
+        lastPlayedBeat = -1;
+        
+        // Start playhead timer for recording (5ms for tighter timing)
+        if (playheadTimer != null) playheadTimer.stop();
+        playheadTimer = new Timer(5, e -> {
+            long elapsed = System.currentTimeMillis() - playbackStartTime;
+            double currentBeat = (elapsed * bpm) / 60000.0;
+            
+            // Loop handling during recording
+            if (loopEnabled && seq.getLoopBeats() > 0) {
+                if (currentBeat >= seq.getLoopBeats()) {
+                    playbackStartTime = System.currentTimeMillis();
+                    recordingStartTime = System.currentTimeMillis();
+                    currentBeat = 0;
+                    lastPlayedBeat = -1;
+                    resetMetronomeToDownbeat();
+                    // Increment track index for new loop (new "layer")
+                    currentMidiTrackIndex++;
+                }
+            }
+            
+            // Play existing notes FIRST
+            for (MidiNote note : seq.getNotes()) {
+                double noteStart = note.getStartBeat();
+                String type = note.getInstrumentType();
+                
+                // Compensate for audio latency: Piano and Guitar need 0.25 beat early trigger
+                double effectiveStart = noteStart;
+                if ("Piano".equals(type) || "Guitar".equals(type)) {
+                    effectiveStart = noteStart - 0.25;
+                }
+                
+                if (effectiveStart > lastPlayedBeat && effectiveStart <= currentBeat) {
+                    playMidiNote(note);
+                }
+            }
+            
+            lastPlayedBeat = currentBeat;
+            
+            // Update playhead visual AFTER
+            midiSequencer.setPlayheadBeat(currentBeat);
+        });
+        playheadTimer.start();
     }
     
     private void startCountIn(Runnable onComplete) {
@@ -360,6 +652,8 @@ public class RecordPanel extends JPanel {
     }
     
     private void stopRecording() {
+        isRecordingToMidi = false;
+        stopMidiPlayback();
         trackManager.stopRecording();
         stopMetronome();
         // Return to edit mode
@@ -370,22 +664,83 @@ public class RecordPanel extends JPanel {
         System.out.println("Record mode stopped");
     }
     
+    /**
+     * Record a note to the MIDI sequence (called from SketchCanvas)
+     */
+    public void recordMidiNote(String instrumentType, int midiNote, int drumKey, 
+                               float velocity, int durationMs, int colorRGB, 
+                               int heightPx, String elementId) {
+        if (!isRecordingToMidi || midiSequencer == null) return;
+        
+        long elapsed = System.currentTimeMillis() - recordingStartTime;
+        double startBeat = (elapsed * bpm) / 60000.0;
+        
+        // Use fixed duration for Piano (1 beat), otherwise calculate from durationMs
+        double durationBeats;
+        if ("Piano".equals(instrumentType)) {
+            durationBeats = 1.0; // Fixed 1 beat for piano
+        } else {
+            durationBeats = (durationMs * bpm) / 60000.0;
+            if (durationBeats < 0.125) durationBeats = 0.25;
+        }
+        
+        // Snap to grid using floor (snap to earlier beat point for natural feel)
+        double snapBeat = midiSequencer.getSnapBeat();
+        startBeat = Math.floor(startBeat / snapBeat) * snapBeat;
+        
+        MidiNote note = new MidiNote(
+            startBeat, durationBeats, instrumentType,
+            midiNote, drumKey, velocity,
+            colorRGB, heightPx, elementId
+        );
+        
+        // Set track color
+        note.setTrackIndex(currentMidiTrackIndex);
+        int trackColorIdx = currentMidiTrackIndex % TRACK_COLORS.length;
+        note.setTrackColorRGB(TRACK_COLORS[trackColorIdx].getRGB());
+        
+        midiSequencer.getSequence().addNote(note);
+    }
+    
+    public boolean isRecordingToMidi() {
+        return isRecordingToMidi;
+    }
+    
     private void startMetronome() {
         stopMetronome();
 
         int intervalMs = 60000 / bpm;
 
         metronomeBeatIndex = 0; // 메트로놈 시작 시 초기화
+        metronomeStartTime = System.currentTimeMillis();
 
         metronomeTimer = new Timer(intervalMs, e -> {
             boolean downbeat = (metronomeBeatIndex == 0);
             SoundManager.getInstance().playMetronomeClick(downbeat);
-            // int beatsPerLoop = getSelectedBeats(); // 4/8/16/32 중 선택값
             metronomeBeatIndex = (metronomeBeatIndex + 1) % 4;
         });
 
+        // First beat comes after the interval (count-in already played beat 4)
         metronomeTimer.setInitialDelay(intervalMs);
         metronomeTimer.start();
+    }
+    
+    private long metronomeStartTime = 0;
+    
+    /**
+     * Reset metronome to downbeat (called when loop restarts)
+     */
+    public void resetMetronomeToDownbeat() {
+        metronomeBeatIndex = 0;
+        metronomeStartTime = System.currentTimeMillis();
+        
+        // Restart the timer to sync with the new loop
+        if (metronomeTimer != null && metronomeTimer.isRunning()) {
+            metronomeTimer.stop();
+            int intervalMs = 60000 / bpm;
+            metronomeTimer.setInitialDelay(intervalMs);
+            metronomeTimer.start();
+        }
     }
     
     private void stopMetronome() {
@@ -406,12 +761,26 @@ public class RecordPanel extends JPanel {
         this.canvas = canvas;
     }
     
+    public void setMidiSequencer(MidiSequencerPanel midiSequencer) {
+        this.midiSequencer = midiSequencer;
+        // Sync sequence settings
+        if (midiSequencer != null) {
+            midiSequencer.getSequence().setBpm(bpm);
+            midiSequencer.getSequence().setLoopBeats(getSelectedBeats());
+            midiSequencer.getSequence().setLooping(loopEnabled);
+        }
+    }
+    
+    public MidiSequencerPanel getMidiSequencer() {
+        return midiSequencer;
+    }
+    
     public boolean isPlaying() {
-        return trackManager.isPlaying();
+        return trackManager.isPlaying() || isMidiPlaying;
     }
     
     public boolean isRecording() {
-        return trackManager.isRecording() || isCountingIn;
+        return trackManager.isRecording() || isCountingIn || isRecordingToMidi;
     }
     
     public boolean isCountingIn() {
@@ -432,16 +801,50 @@ public class RecordPanel extends JPanel {
     }
     
     private void handleTrackDelete(int trackIndex) {
-        trackManager.deleteTrack(trackIndex);
-        System.out.println("Track " + (trackIndex + 1) + " deleted");
+        if (midiSequencer != null) {
+            // Delete all notes from this MIDI track
+            MidiSequence seq = midiSequencer.getSequence();
+            java.util.List<MidiNote> toRemove = new java.util.ArrayList<>();
+            for (MidiNote note : seq.getNotes()) {
+                if (note.getTrackIndex() == trackIndex) {
+                    toRemove.add(note);
+                }
+            }
+            for (MidiNote note : toRemove) {
+                seq.removeNote(note);
+            }
+            
+            // If deleting current track, stay on same index
+            // If deleting a track before current, adjust currentMidiTrackIndex
+            if (trackIndex < currentMidiTrackIndex) {
+                currentMidiTrackIndex--;
+            }
+            
+            // Re-index remaining tracks
+            for (MidiNote note : seq.getNotes()) {
+                if (note.getTrackIndex() > trackIndex) {
+                    note.setTrackIndex(note.getTrackIndex() - 1);
+                    // Update track color
+                    int newIdx = note.getTrackIndex() % TRACK_COLORS.length;
+                    note.setTrackColorRGB(TRACK_COLORS[newIdx].getRGB());
+                }
+            }
+            
+            midiSequencer.repaint();
+            repaint();
+            System.out.println("MIDI Track " + (trackIndex + 1) + " deleted");
+        } else {
+            trackManager.deleteTrack(trackIndex);
+            System.out.println("Track " + (trackIndex + 1) + " deleted");
+        }
     }
     
     private void loadIcons() {
         try {
-            playIcon = ImageIO.read(new File("symbols/play.png"));
-            recordIcon = ImageIO.read(new File("symbols/record.png"));
-            loopIcon = ImageIO.read(new File("symbols/loop.png"));
-            System.out.println("Loaded icons from symbols folder");
+            File symbolsDir = ResourceLoader.getSymbolsDir();
+            playIcon = ImageIO.read(new File(symbolsDir, "play.png"));
+            recordIcon = ImageIO.read(new File(symbolsDir, "record.png"));
+            loopIcon = ImageIO.read(new File(symbolsDir, "loop.png"));
         } catch (Exception e) {
             System.err.println("Failed to load icons: " + e.getMessage());
         }
@@ -467,26 +870,113 @@ public class RecordPanel extends JPanel {
         // Draw beat selector (y = BEATS_Y)
         drawBeatSelector(g2d);
         
-        // Draw tracks (y = TRACKS_Y) - dynamic from TrackManager
+        // Draw tracks (y = TRACKS_Y) - show MIDI tracks
         g2d.setFont(FontManager.getRegular(18));
         
-        java.util.List<Track> tracks = trackManager.getTracks();
-        Track currentRecording = trackManager.getCurrentRecordingTrack();
+        if (midiSequencer != null) {
+            // Show MIDI track layers
+            drawMidiTracks(g2d);
+        } else {
+            // Fallback to TrackManager tracks
+            java.util.List<Track> tracks = trackManager.getTracks();
+            Track currentRecording = trackManager.getCurrentRecordingTrack();
+            
+            int trackIndex = 0;
+            for (Track track : tracks) {
+                if (trackIndex < NUM_TRACKS) {
+                    drawTrack(g2d, track, trackIndex, TRACKS_Y + trackIndex * TRACK_HEIGHT);
+                }
+                trackIndex++;
+            }
+            
+            if (currentRecording != null && trackIndex < NUM_TRACKS) {
+                drawTrack(g2d, currentRecording, trackIndex, TRACKS_Y + trackIndex * TRACK_HEIGHT);
+                g2d.setColor(new Color(255, 0, 0, 100));
+                g2d.fillRect(0, TRACKS_Y + trackIndex * TRACK_HEIGHT, TRACK_WIDTH, TRACK_HEIGHT);
+            }
+        }
+    }
+    
+    private void drawMidiTracks(Graphics2D g2d) {
+        MidiSequence seq = midiSequencer.getSequence();
         
-        int trackIndex = 0;
-        
-        // Draw existing tracks
-        for (Track track : tracks) {
-            drawTrack(g2d, track, trackIndex, TRACKS_Y + trackIndex * TRACK_HEIGHT);
-            trackIndex++;
+        // Count notes per track
+        java.util.Map<Integer, Integer> notesPerTrack = new java.util.HashMap<>();
+        for (MidiNote note : seq.getNotes()) {
+            int ti = note.getTrackIndex();
+            notesPerTrack.put(ti, notesPerTrack.getOrDefault(ti, 0) + 1);
         }
         
-        // Draw current recording track (if any)
-        if (currentRecording != null && trackIndex < NUM_TRACKS) {
-            drawTrack(g2d, currentRecording, trackIndex, TRACKS_Y + trackIndex * TRACK_HEIGHT);
-            // Add recording indicator
-            g2d.setColor(new Color(255, 0, 0, 100));
-            g2d.fillRect(0, TRACKS_Y + trackIndex * TRACK_HEIGHT, TRACK_WIDTH, TRACK_HEIGHT);
+        // Determine how many tracks to show
+        // Only show current track if actively recording, otherwise just show tracks with notes
+        int maxTrack = -1;
+        if (isRecordingToMidi) {
+            maxTrack = currentMidiTrackIndex;
+        }
+        for (int ti : notesPerTrack.keySet()) {
+            maxTrack = Math.max(maxTrack, ti);
+        }
+        
+        // Draw each track layer
+        for (int i = 0; i <= maxTrack && i < NUM_TRACKS; i++) {
+            int y = TRACKS_Y + i * TRACK_HEIGHT;
+            Color trackColor = TRACK_COLORS[i % TRACK_COLORS.length];
+            
+            // Background
+            g2d.setColor(trackColor);
+            g2d.fillRect(0, y, TRACK_WIDTH, TRACK_HEIGHT);
+            
+            // Hover effect
+            if (hoveredTrack == i && hoveredTrackX != i) {
+                g2d.setColor(new Color(255, 255, 255, 50));
+                g2d.fillRect(0, y, TRACK_WIDTH - 50, TRACK_HEIGHT);
+            }
+            
+            // Track label
+            g2d.setColor(Color.WHITE);
+            g2d.setFont(FontManager.getRegular(18));
+            String label = "TRACK " + (i + 1);
+            FontMetrics fm = g2d.getFontMetrics();
+            int textY = y + (TRACK_HEIGHT + fm.getAscent() - fm.getDescent()) / 2;
+            g2d.drawString(label, 15, textY);
+            
+            // Note count
+            int noteCount = notesPerTrack.getOrDefault(i, 0);
+            if (noteCount > 0) {
+                g2d.setFont(FontManager.getRegular(10));
+                g2d.drawString(noteCount + " notes", 15, y + 15);
+            }
+            
+            // Recording indicator for current track
+            if (isRecordingToMidi && i == currentMidiTrackIndex) {
+                g2d.setColor(new Color(255, 0, 0, 100));
+                g2d.fillRect(0, y, TRACK_WIDTH, TRACK_HEIGHT);
+            }
+            
+            // X button for clearing track
+            if (hoveredTrackX == i) {
+                g2d.setColor(new Color(0, 0, 0, 50));
+                g2d.fillRect(TRACK_WIDTH - 50, y, 50, TRACK_HEIGHT);
+            }
+            
+            // X icon
+            g2d.setColor(Color.WHITE);
+            g2d.setStroke(new BasicStroke(2));
+            int xCenter = TRACK_WIDTH - 25;
+            int yCenter = y + TRACK_HEIGHT / 2;
+            int xSize = 8;
+            g2d.drawLine(xCenter - xSize, yCenter - xSize, xCenter + xSize, yCenter + xSize);
+            g2d.drawLine(xCenter - xSize, yCenter + xSize, xCenter + xSize, yCenter - xSize);
+        }
+        
+        // Show message if no tracks yet
+        if (maxTrack < 0) {
+            int y = TRACKS_Y;
+            g2d.setColor(new Color(0x50, 0x50, 0x50));
+            g2d.fillRect(0, y, TRACK_WIDTH, TRACK_HEIGHT);
+            g2d.setColor(new Color(0xAA, 0xAA, 0xAA));
+            g2d.setFont(FontManager.getRegular(14));
+            g2d.drawString("No tracks yet", 15, y + 30);
         }
     }
     
@@ -642,7 +1132,18 @@ public class RecordPanel extends JPanel {
     public void setBpm(int bpm) {
         this.bpm = Math.max(MIN_BPM, Math.min(MAX_BPM, bpm));
         trackManager.setBpm(this.bpm);
+        if (midiSequencer != null) {
+            midiSequencer.getSequence().setBpm(this.bpm);
+        }
         updateMetronomeBpm();
+        repaint();
+    }
+    
+    /**
+     * Reset track index (called when creating new file)
+     */
+    public void resetMidiTrackIndex() {
+        currentMidiTrackIndex = 0;
         repaint();
     }
     

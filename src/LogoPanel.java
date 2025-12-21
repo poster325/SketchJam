@@ -18,8 +18,8 @@ public class LogoPanel extends JPanel {
         
         // Load logo image
         try {
-            logoImage = ImageIO.read(new File("symbols/bottomlogo.png"));
-            System.out.println("Loaded bottom logo");
+            File symbolsDir = ResourceLoader.getSymbolsDir();
+            logoImage = ImageIO.read(new File(symbolsDir, "bottomlogo.png"));
         } catch (Exception e) {
             System.err.println("Could not load bottomlogo.png: " + e.getMessage());
         }

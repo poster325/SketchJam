@@ -4,12 +4,13 @@ import java.awt.event.*;
 
 public class SketchJamApp extends JFrame {
     
-    public static final int WINDOW_WIDTH = 1900;
-    public static final int WINDOW_HEIGHT = 1050;
-    public static final int CANVAS_X = 200;
-    public static final int CANVAS_Y = 0;
-    public static final int CANVAS_WIDTH = 1350;
-    public static final int CANVAS_HEIGHT = 1050;
+    public static final int DEFAULT_WIDTH = 1900;
+    public static final int DEFAULT_HEIGHT = 1050;
+    public static final int MIN_WIDTH = 1200;
+    public static final int MIN_HEIGHT = 700;
+    public static final int LEFT_PANEL_WIDTH = 200;
+    public static final int RIGHT_PANEL_WIDTH = 350;
+    public static final int MIDI_PANEL_HEIGHT = 200;
     public static final int GRID_SIZE = 25;
     public static final int SNAP_SIZE = 5;
     
@@ -21,16 +22,20 @@ public class SketchJamApp extends JFrame {
     private EQPanel eqPanel;
     private FilePanel filePanel;
     private RecordPanel recordPanel;
+    private LogoPanel logoPanel;
+    private MidiSequencerPanel midiPanel;
     private UndoRedoManager undoRedoManager;
+    private JPanel contentPanel;
     
     public SketchJamApp() {
         setTitle("SketchJam");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setResizable(false);
+        setResizable(true);
+        setMinimumSize(new Dimension(MIN_WIDTH, MIN_HEIGHT));
         
-        // Create content panel with fixed size and double buffering
-        JPanel contentPanel = new JPanel(null);
-        contentPanel.setPreferredSize(new Dimension(WINDOW_WIDTH, WINDOW_HEIGHT));
+        // Create content panel with null layout for absolute positioning
+        contentPanel = new JPanel(null);
+        contentPanel.setPreferredSize(new Dimension(DEFAULT_WIDTH, DEFAULT_HEIGHT));
         contentPanel.setBackground(new Color(0x38, 0x38, 0x38)); // #383838
         contentPanel.setDoubleBuffered(true);
         setContentPane(contentPanel);
@@ -38,103 +43,78 @@ public class SketchJamApp extends JFrame {
         // Initialize undo/redo manager
         undoRedoManager = new UndoRedoManager(20);
         
-        // Create canvas
+        // Create canvas (will be sized in updateLayout)
         canvas = new SketchCanvas(undoRedoManager);
-        canvas.setBounds(CANVAS_X, CANVAS_Y, CANVAS_WIDTH, CANVAS_HEIGHT);
         contentPanel.add(canvas);
         
         // Connect undo manager to canvas
         undoRedoManager.setCanvas(canvas);
         
-        // Create file panel (top-left, at position 0, 0)
-        // Width: 200px (4 buttons * 50px), Height: 50px (no padding)
+        // Create file panel (top-left)
         filePanel = new FilePanel();
-        filePanel.setBounds(0, 0, 200, 50);
         filePanel.setCanvas(canvas);
         contentPanel.add(filePanel);
         
         // Create record panel (left side, below file panel)
-        // Width: 200px, Height: BPM + icons + beats + tracks (7*50=350) = 525
         recordPanel = new RecordPanel();
-        recordPanel.setBounds(0, 50, 200, 525);  // Start at y=50 (below FilePanel)
         recordPanel.setCanvas(canvas);
         canvas.setRecordPanel(recordPanel);
         contentPanel.add(recordPanel);
         
-        // Create color palette (positioned at 1575, 25 per design spec)
-        // Colorbox: 350×150 at position 1550, 25 (25px padding around 300×100 color matrix)
-        int paletteWidth = 350;
-        int paletteHeight = 150;
-        int paletteX = 1550;  // Right edge at window edge (1550 + 350 = 1900)
-        int paletteY = 0;     // Top edge at window edge
-        
+        // Create color palette (right side)
         colorPalette = new ColorPalette(canvas);
-        colorPalette.setBounds(paletteX, paletteY, paletteWidth, paletteHeight);
         contentPanel.add(colorPalette);
         
-        // Create scale preset (right below color palette)
-        // 7 cells × 50px = 350px wide, 50px tall
-        int scalePresetWidth = 350;
-        int scalePresetHeight = 50;
-        int scalePresetX = paletteX;  // Same x as color palette
-        int scalePresetY = paletteY + paletteHeight;  // Right below color palette
-        
+        // Create scale preset (below color palette)
         scalePreset = new ScalePreset(canvas);
-        scalePreset.setBounds(scalePresetX, scalePresetY, scalePresetWidth, scalePresetHeight);
         contentPanel.add(scalePreset);
         
-        // Create scale selector (right below scale preset)
-        // Height: 75px (25 for label + 25 for root notes + 25 for major/minor)
-        int scaleSelectorWidth = 350;
-        int scaleSelectorHeight = 75;
-        int scaleSelectorX = paletteX;
-        int scaleSelectorY = scalePresetY + scalePresetHeight;
-        
+        // Create scale selector (below scale preset)
         scaleSelector = new ScaleSelector(scalePreset);
-        scaleSelector.setBounds(scaleSelectorX, scaleSelectorY, scaleSelectorWidth, scaleSelectorHeight);
         contentPanel.add(scaleSelector);
         
         // Connect color palette and scale preset for mutual selection clearing
         colorPalette.setScalePreset(scalePreset);
         scalePreset.setColorPalette(colorPalette);
         
-        // Create SF2 Manager (below scale selector with 25px spacing)
-        // Height: 100px (25 for label + 25 for piano + 25 for guitar + 25 for drums)
-        int sf2ManagerWidth = 350;
-        int sf2ManagerHeight = 100;
-        int sf2ManagerX = paletteX;
-        int sf2ManagerY = scaleSelectorY + scaleSelectorHeight + 25; // 25px spacing
-        
+        // Create SF2 Manager (below scale selector)
         sf2Manager = new SF2Manager();
-        sf2Manager.setBounds(sf2ManagerX, sf2ManagerY, sf2ManagerWidth, sf2ManagerHeight);
         contentPanel.add(sf2Manager);
         
-        // Create EQ Panel (below SF2 Manager with 25px spacing)
-        int eqPanelWidth = 350;
-        int eqPanelHeight = 75;
-        int eqPanelX = paletteX;
-        int eqPanelY = sf2ManagerY + sf2ManagerHeight + 25; // 25px spacing
-        
+        // Create EQ Panel (below SF2 Manager)
         eqPanel = new EQPanel(canvas);
-        eqPanel.setBounds(eqPanelX, eqPanelY, eqPanelWidth, eqPanelHeight);
         contentPanel.add(eqPanel);
         
         // Create Logo Panel (bottom right corner)
-        // Position: 1550, 950 (window height 1050 - 100 height = 950)
-        int logoPanelWidth = 350;
-        int logoPanelHeight = 100;
-        int logoPanelX = paletteX;
-        int logoPanelY = WINDOW_HEIGHT - logoPanelHeight;
-        
-        LogoPanel logoPanel = new LogoPanel();
-        logoPanel.setBounds(logoPanelX, logoPanelY, logoPanelWidth, logoPanelHeight);
+        logoPanel = new LogoPanel();
         contentPanel.add(logoPanel);
+        
+        // Create MIDI Sequencer Panel (top of canvas area)
+        midiPanel = new MidiSequencerPanel();
+        midiPanel.setCanvas(canvas);  // Connect to canvas for element-based rows
+        contentPanel.add(midiPanel);
+        
+        // Connect MIDI panel to record panel and canvas
+        recordPanel.setMidiSequencer(midiPanel);
+        canvas.setMidiSequencer(midiPanel);  // For refreshing when elements change
+        
+        // Initial layout
+        updateLayout(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        
+        // Add resize listener
+        addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                Dimension size = getContentPane().getSize();
+                updateLayout(size.width, size.height);
+            }
+        });
         
         // Initialize FileManager with all components
         FileManager.getInstance().setComponents(canvas, recordPanel, colorPalette, 
-            scaleSelector, sf2Manager, eqPanel);
+            scaleSelector, sf2Manager, eqPanel, midiPanel);
         
-        // Add keyboard shortcuts for undo/redo
+        // Add keyboard shortcuts
         setupKeyBindings();
         
         // Add window close listener for unsaved changes warning
@@ -152,6 +132,38 @@ public class SketchJamApp extends JFrame {
         pack();
         setLocationRelativeTo(null);
         setVisible(true);
+    }
+    
+    /**
+     * Update component positions based on window size
+     */
+    private void updateLayout(int width, int height) {
+        // Left panel - fixed width
+        filePanel.setBounds(0, 0, LEFT_PANEL_WIDTH, 50);
+        recordPanel.setBounds(0, 50, LEFT_PANEL_WIDTH, 525);
+        
+        // Right panel - fixed width, anchored to right edge
+        int rightX = width - RIGHT_PANEL_WIDTH;
+        
+        colorPalette.setBounds(rightX, 0, RIGHT_PANEL_WIDTH, 150);
+        scalePreset.setBounds(rightX, 150, RIGHT_PANEL_WIDTH, 50);
+        scaleSelector.setBounds(rightX, 200, RIGHT_PANEL_WIDTH, 75);
+        sf2Manager.setBounds(rightX, 300, RIGHT_PANEL_WIDTH, 100);
+        eqPanel.setBounds(rightX, 425, RIGHT_PANEL_WIDTH, 75);
+        logoPanel.setBounds(rightX, height - 100, RIGHT_PANEL_WIDTH, 100);
+        
+        // MIDI Sequencer Panel - top of canvas area
+        int canvasX = LEFT_PANEL_WIDTH;
+        int canvasWidth = width - LEFT_PANEL_WIDTH - RIGHT_PANEL_WIDTH;
+        midiPanel.setBounds(canvasX, 0, canvasWidth, MIDI_PANEL_HEIGHT);
+        
+        // Canvas - fills the space between left and right panels, below MIDI panel
+        int canvasHeight = height - MIDI_PANEL_HEIGHT;
+        canvas.setBounds(canvasX, MIDI_PANEL_HEIGHT, canvasWidth, canvasHeight);
+        
+        // Repaint all
+        contentPanel.revalidate();
+        contentPanel.repaint();
     }
     
     private void setupKeyBindings() {
