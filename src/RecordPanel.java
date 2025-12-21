@@ -425,11 +425,14 @@ public class RecordPanel extends JPanel {
         int midiNoteNum = note.getMidiNote();
         int drumKey = note.getDrumKey();
         String instrumentType = note.getInstrumentType();
+        DrawableElement glowElement = null;
         
         // Look up element by ID to use CURRENT properties (reflects element edits)
         if (note.getElementId() != null && canvas != null) {
             DrawableElement element = canvas.getElementById(note.getElementId());
             if (element != null) {
+                glowElement = element; // Save for glow animation
+                
                 // Update from current element state
                 colorRGB = element.getColor().getRGB();
                 velocity = element.getOpacity();
@@ -475,6 +478,11 @@ public class RecordPanel extends JPanel {
         );
         
         SoundManager.getInstance().playNoteEvent(event);
+        
+        // Trigger glow animation on the element
+        if (glowElement != null && canvas != null) {
+            canvas.triggerGlow(glowElement);
+        }
     }
     
     // Helper methods for recalculating note properties from current element state

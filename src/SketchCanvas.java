@@ -119,8 +119,9 @@ public class SketchCanvas extends JPanel {
     /**
      * Trigger glow effect on an element (called when played)
      */
-    private void triggerGlow(DrawableElement element) {
+    public void triggerGlow(DrawableElement element) {
         glowingElements.put(element, 1.0f);
+        repaint();
     }
     
     @Override
