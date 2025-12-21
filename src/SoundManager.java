@@ -1088,6 +1088,10 @@ public class SoundManager {
     }
 
 
+    // Version tracking for layered notes (same pattern as guitar)
+    private java.util.Map<String, Long> layeredNoteVersions = new java.util.HashMap<>();
+    private long layeredNoteCounter = 0;
+    
     private void playLayeredNote(int channelIndex, int midiNote, int baseVel, int durationMs, Color color) {
         if (channels == null || channelIndex < 0 || channelIndex >= channels.length) return;
 
@@ -1105,6 +1109,15 @@ public class SoundManager {
                 ? distortionChannels[channelIndex]
                 : null;
 
+        // Version tracking key: channel + note
+        String noteKey = channelIndex + "_" + midiNote;
+        final long thisVersion = ++layeredNoteCounter;
+        layeredNoteVersions.put(noteKey, thisVersion);
+        
+        // Stop any currently playing note first (clean retrigger)
+        cleanCh.noteOff(midiNote);
+        if (distCh != null) distCh.noteOff(midiNote);
+
         if (cleanVel > 0) cleanCh.noteOn(midiNote, cleanVel);
         if (distVel > 0 && distCh != null) distCh.noteOn(midiNote, distVel);
 
@@ -1112,8 +1125,12 @@ public class SoundManager {
         new Thread(() -> {
             try {
                 Thread.sleep(dur);
-                cleanCh.noteOff(midiNote);
-                if (distCh != null) distCh.noteOff(midiNote);
+                // Only turn off if this is still the current version (not replaced by newer note)
+                Long currentVersion = layeredNoteVersions.get(noteKey);
+                if (currentVersion != null && currentVersion == thisVersion) {
+                    cleanCh.noteOff(midiNote);
+                    if (distCh != null) distCh.noteOff(midiNote);
+                }
             } catch (InterruptedException ignored) {}
         }).start();
     }
