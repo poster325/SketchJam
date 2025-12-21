@@ -71,6 +71,13 @@ public class SoundManager {
         return instance;
     }
     
+    /**
+     * Check if distortion SF2 files (from distortion/ folder) are loaded
+     */
+    public boolean isDistortionLoaded() {
+        return distortionLoaded;
+    }
+    
     private void initializeSynthesizer() {
         try {
             synthesizer = MidiSystem.getSynthesizer();

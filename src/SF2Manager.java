@@ -11,6 +11,13 @@ import java.util.List;
  */
 public class SF2Manager extends JPanel {
     
+    // Singleton instance
+    private static SF2Manager instance;
+    
+    public static SF2Manager getInstance() {
+        return instance;
+    }
+    
     private static final int ROW_HEIGHT = 25;
     private static final int LABEL_WIDTH = 60;
     private static final int SELECTOR_WIDTH = 290;
@@ -32,6 +39,8 @@ public class SF2Manager extends JPanel {
     private JPopupMenu dropdownPopup;
     
     public SF2Manager() {
+        instance = this; // Set singleton instance
+        
         // Height: Label (25) + Piano row (25) + Guitar row (25) + Drums row (25) = 100
         setPreferredSize(new Dimension(350, ROW_HEIGHT * 4));
         setBackground(new Color(0x38, 0x38, 0x38));

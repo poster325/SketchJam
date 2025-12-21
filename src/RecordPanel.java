@@ -389,17 +389,11 @@ public class RecordPanel extends JPanel {
             }
             
             // Play notes FIRST (before updating visual playhead)
+            // Apply 125ms compensation for 8bit/distortion SF2 files
+            double compensationBeats = getSF2CompensationBeats();
             for (MidiNote note : seq.getNotes()) {
-                double noteStart = note.getStartBeat();
-                String type = note.getInstrumentType();
-                
-                // Compensate for audio latency: Piano and Guitar need 0.25 beat early trigger
-                double effectiveStart = noteStart;
-                if ("Piano".equals(type) || "Guitar".equals(type)) {
-                    effectiveStart = noteStart - 0.25;
-                }
-                
-                if (effectiveStart > lastPlayedBeat && effectiveStart <= currentBeat) {
+                double triggerBeat = note.getStartBeat() - compensationBeats;
+                if (triggerBeat > lastPlayedBeat && triggerBeat <= currentBeat) {
                     playMidiNote(note);
                 }
             }
@@ -524,6 +518,22 @@ public class RecordPanel extends JPanel {
         };
     }
     
+    /**
+     * Get SF2 latency compensation in beats.
+     * Returns 125ms worth of beats for distortion SF2 files (from distortion/ folder).
+     * 125ms = 0.25 beats at 120 BPM, but we calculate based on current BPM.
+     */
+    private double getSF2CompensationBeats() {
+        // Check if distortion SF2s are loaded (8bitsf.SF2, Distortion_Guitar.sf2)
+        if (SoundManager.getInstance().isDistortionLoaded()) {
+            // 125ms compensation converted to beats at current BPM
+            // 125ms * (bpm / 60000) = beats
+            return 125.0 * bpm / 60000.0;
+        }
+        
+        return 0.0;
+    }
+    
     private boolean isCountingIn = false;
     private Timer countInTimer;
     
@@ -600,17 +610,11 @@ public class RecordPanel extends JPanel {
             }
             
             // Play existing notes FIRST
+            // Apply 125ms compensation for 8bit/distortion SF2 files
+            double compensationBeats = getSF2CompensationBeats();
             for (MidiNote note : seq.getNotes()) {
-                double noteStart = note.getStartBeat();
-                String type = note.getInstrumentType();
-                
-                // Compensate for audio latency: Piano and Guitar need 0.25 beat early trigger
-                double effectiveStart = noteStart;
-                if ("Piano".equals(type) || "Guitar".equals(type)) {
-                    effectiveStart = noteStart - 0.25;
-                }
-                
-                if (effectiveStart > lastPlayedBeat && effectiveStart <= currentBeat) {
+                double triggerBeat = note.getStartBeat() - compensationBeats;
+                if (triggerBeat > lastPlayedBeat && triggerBeat <= currentBeat) {
                     playMidiNote(note);
                 }
             }
