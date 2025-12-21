@@ -26,6 +26,11 @@ public class MidiSequence {
     // Listeners
     private List<SequenceListener> listeners;
     
+    // Undo/Redo stacks
+    private static final int MAX_HISTORY = 50;
+    private List<List<MidiNote>> undoStack = new ArrayList<>();
+    private List<List<MidiNote>> redoStack = new ArrayList<>();
+    
     public interface SequenceListener {
         void onSequenceChanged();
         void onSelectionChanged();
@@ -39,6 +44,73 @@ public class MidiSequence {
         this.trackCount = 0;
         this.listeners = new ArrayList<>();
     }
+    
+    /**
+     * Save current state for undo (call before any modification)
+     */
+    public void saveState() {
+        List<MidiNote> snapshot = new ArrayList<>();
+        for (MidiNote note : notes) {
+            snapshot.add(new MidiNote(note)); // Use copy constructor
+        }
+        undoStack.add(snapshot);
+        
+        // Limit history size
+        if (undoStack.size() > MAX_HISTORY) {
+            undoStack.remove(0);
+        }
+        
+        // Clear redo stack when new action is performed
+        redoStack.clear();
+        
+        // Mark project as having unsaved changes
+        FileManager.getInstance().markUnsaved();
+    }
+    
+    /**
+     * Undo last change
+     */
+    public void undo() {
+        if (undoStack.isEmpty()) return;
+        
+        // Save current state to redo stack
+        List<MidiNote> currentSnapshot = new ArrayList<>();
+        for (MidiNote note : notes) {
+            currentSnapshot.add(new MidiNote(note));
+        }
+        redoStack.add(currentSnapshot);
+        
+        // Restore previous state
+        List<MidiNote> previousState = undoStack.remove(undoStack.size() - 1);
+        notes.clear();
+        notes.addAll(previousState);
+        
+        notifySequenceChanged();
+    }
+    
+    /**
+     * Redo last undone change
+     */
+    public void redo() {
+        if (redoStack.isEmpty()) return;
+        
+        // Save current state to undo stack
+        List<MidiNote> currentSnapshot = new ArrayList<>();
+        for (MidiNote note : notes) {
+            currentSnapshot.add(new MidiNote(note));
+        }
+        undoStack.add(currentSnapshot);
+        
+        // Restore redo state
+        List<MidiNote> redoState = redoStack.remove(redoStack.size() - 1);
+        notes.clear();
+        notes.addAll(redoState);
+        
+        notifySequenceChanged();
+    }
+    
+    public boolean canUndo() { return !undoStack.isEmpty(); }
+    public boolean canRedo() { return !redoStack.isEmpty(); }
     
     public void addListener(SequenceListener listener) {
         listeners.add(listener);

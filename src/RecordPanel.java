@@ -487,7 +487,8 @@ public class RecordPanel extends JPanel {
     // Helper methods for recalculating note properties from current element state
     private int getNoteIndexFromColor(Color color) {
         float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
-        return (int)(hsb[0] * 12) % 12;
+        // Use Math.round to match SoundManager calculation
+        return (int)Math.round(hsb[0] * 12) % 12;
     }
     
     private int parseOctaveFromMapped(String mapped, String instrumentType) {

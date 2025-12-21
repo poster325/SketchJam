@@ -166,6 +166,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("delete", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 sequence.removeSelectedNotes();
             }
         });
@@ -175,7 +176,26 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("duplicate", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 sequence.duplicateSelectedNotes();
+            }
+        });
+        
+        // Undo with Ctrl+Z
+        getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_Z, InputEvent.CTRL_DOWN_MASK), "undo");
+        getActionMap().put("undo", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sequence.undo();
+            }
+        });
+        
+        // Redo with Ctrl+Y
+        getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_Y, InputEvent.CTRL_DOWN_MASK), "redo");
+        getActionMap().put("redo", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sequence.redo();
             }
         });
         
@@ -196,6 +216,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("quantize", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 sequence.quantizeSelectedNotes(snapBeat);
             }
         });
@@ -205,6 +226,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("moveLeft", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 moveSelectedNotes(-snapBeat);
             }
         });
@@ -214,6 +236,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("moveRight", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 moveSelectedNotes(snapBeat);
             }
         });
@@ -223,6 +246,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("moveUp", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 moveSelectedNotesVertically(-1);
             }
         });
@@ -232,6 +256,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
         getActionMap().put("moveDown", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
+                sequence.saveState();
                 moveSelectedNotesVertically(1);
             }
         });
@@ -242,6 +267,10 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
             @Override
             public void actionPerformed(ActionEvent e) {
                 isDurationAdjustMode = true;
+                // Save state before duration adjustment
+                if (!sequence.getSelectedNotes().isEmpty()) {
+                    sequence.saveState();
+                }
                 // Store original durations of selected notes
                 originalNoteDurations.clear();
                 for (MidiNote note : sequence.getSelectedNotes()) {
@@ -280,6 +309,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
                                    e.getX() > noteRect.x + noteRect.width - resizeZone;
             
             if (isResizeArea) {
+                sequence.saveState(); // Save state before resize
                 dragMode = DragMode.RESIZE_NOTE;
                 dragNote = clickedNote;
                 dragNoteDuration = clickedNote.getDurationBeats();
@@ -290,6 +320,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
                 }
             } else {
                 // Moving note(s) - Alt+drag to duplicate
+                sequence.saveState(); // Save state before move
                 dragMode = DragMode.MOVE_NOTE;
                 dragNote = clickedNote;
                 dragNoteStartBeat = clickedNote.getStartBeat();
@@ -326,15 +357,17 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
     private void handleMouseDragged(MouseEvent e) {
         dragCurrent = e.getPoint();
         
-        // S+drag: Adjust duration of selected notes
+        // S+drag: Adjust duration of selected notes - cursor sets the end position
         if (isDurationAdjustMode && !originalNoteDurations.isEmpty()) {
-            double deltaBeat = xToBeat(dragCurrent.x) - xToBeat(dragStart.x);
+            double cursorBeat = snapToGrid(xToBeat(dragCurrent.x));
+            
             for (MidiNote note : sequence.getSelectedNotes()) {
-                Double originalDuration = originalNoteDurations.get(note);
-                if (originalDuration != null) {
-                    double newDuration = Math.max(snapBeat, snapToGrid(originalDuration + deltaBeat));
-                    note.setDurationBeats(newDuration);
-                }
+                // The note's end should follow the cursor
+                double newEndBeat = cursorBeat;
+                double newDuration = newEndBeat - note.getStartBeat();
+                // Ensure minimum duration
+                newDuration = Math.max(snapBeat, newDuration);
+                note.setDurationBeats(newDuration);
             }
             repaint();
             return;
@@ -426,6 +459,7 @@ public class MidiSequencerPanel extends JPanel implements MidiSequence.SequenceL
                 // Create a new note with default properties
                 MidiNote note = createNoteForRow(rowInfo, beat, snapBeat * 4);
                 if (note != null) {
+                    sequence.saveState(); // Save state before creating note
                     note.setRowIndex(row);
                     sequence.addNote(note);
                     sequence.selectNote(note, false);

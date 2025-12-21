@@ -1408,8 +1408,8 @@ public class SketchCanvas extends JPanel {
     private int getNoteIndexFromColor(Color color) {
         // Find closest matching note color (0-11 for C to B)
         float[] hsb = Color.RGBtoHSB(color.getRed(), color.getGreen(), color.getBlue(), null);
-        // Map hue (0-1) to note index (0-11)
-        return (int)(hsb[0] * 12) % 12;
+        // Map hue (0-1) to note index (0-11) - use Math.round to match SoundManager
+        return (int)Math.round(hsb[0] * 12) % 12;
     }
     
     /**

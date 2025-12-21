@@ -70,6 +70,8 @@ Added keyboard quasi-modes for easier element scaling in OBJECT mode:
 | ← / → | Move selected notes left/right |
 | ↑ / ↓ | Move selected notes up/down (change row) |
 | Delete / Backspace | Delete selected notes |
+| Ctrl + Z | Undo last MIDI edit |
+| Ctrl + Y | Redo last undone edit |
 | Ctrl + D | Duplicate selected notes |
 | Ctrl + A | Select all notes |
 | Q | Quantize selected notes |
